@@ -1,0 +1,17 @@
+# Zugangsdaten / Konfiguration mit IDs
+config.json
+
+# Google-OAuth-Client fuer das SEO-Monitoring (Secrets)
+seo_client_secret.json
+
+# Daten (Rohdaten, Snapshots, Datenbank) -- enthalten Einnahmen, nicht einchecken
+data/
+*.db
+
+# Generiertes Dashboard (enthaelt Einnahmen)
+dashboard.html
+
+# Python
+.venv/
+__pycache__/
+*.pyc

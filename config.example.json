@@ -1,0 +1,49 @@
+{
+  "source": "gsheet",
+  "marketplace": "amazon.de",
+  "currency": "EUR",
+
+  "gsheet": {
+    "sheet_id": "1MaTkipG-JkXn-A2mqcvQr5vS-goS79vjF8JO3V-tliY",
+    "gid": "767104803"
+  },
+
+  "inbox_dir": "data/inbox",
+  "archive_dir": "data/archive",
+  "db_path": "data/affiliate.db",
+  "out_file": "dashboard.html",
+  "open_browser": true,
+
+  "s3": {
+    "bucket": "",
+    "prefix": "",
+    "region": "eu-west-1",
+    "aws_access_key_id": "",
+    "aws_secret_access_key": ""
+  },
+
+  "seo": {
+    "enabled": false,
+    "db_path": "data/seo.db",
+    "google": {
+      "client_secret_path": "seo_client_secret.json",
+      "token_path": "data/google_token.json"
+    },
+    "gsc": {
+      "property": "https://example.de/"
+    },
+    "ga4": {
+      "property_id": "properties/123456789"
+    },
+    "seranking": {
+      "api_key": "",
+      "project_id": ""
+    },
+    "pages": [
+      {
+        "url": "/ratgeber/beispiel-seite/",
+        "keywords": ["beispiel keyword"]
+      }
+    ]
+  }
+}

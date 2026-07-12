@@ -1,0 +1,16 @@
+# Der Kernpfad (Google Sheet -> dashboard.html) laeuft komplett mit der
+# Python-Standardbibliothek (urllib, csv, sqlite3, json) -- KEINE Installation noetig.
+#
+# Die folgenden Pakete sind nur fuer optionale Funktionen erforderlich:
+openpyxl>=3.1    # nur fuer .xlsx-Import im csv_adapter (data/inbox)
+boto3>=1.34      # nur fuer den spaeteren S3-Data-Feed-Adapter
+
+# Nur fuer das SEO-Monitoring (seo.enabled=true):
+google-auth>=2.29                # Credentials/Refresh fuer GSC + GA4
+google-auth-oauthlib>=1.2        # einmaliger lokaler OAuth-Login (InstalledAppFlow)
+google-api-python-client>=2.126  # Search Console API (searchAnalytics.query)
+google-analytics-data>=0.18      # GA4 Data API (runReport)
+
+# Nur fuer den Server-Betrieb (server.py, siehe README "Deployment auf Hostinger"):
+flask>=3.0                       # Web-Framework fuer server.py
+gunicorn>=22.0                   # WSGI-Server fuer den Produktivbetrieb (nicht lokal noetig)
