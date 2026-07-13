@@ -165,14 +165,17 @@ td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid #e6e8e1}
   <label>Währung <input type="text" name="currency" value="{{ s.get('currency','') }}"></label>
   <label>Google-Sheet-ID <input type="text" name="gsheet_sheet_id" value="{{ s.get('gsheet_sheet_id','') }}"></label>
   <label>Sheet-Tab-ID (gid) <input type="text" name="gsheet_gid" value="{{ s.get('gsheet_gid','') }}"></label>
+  <button type="submit">Speichern</button>
+</form>
 
+<form method="post" action="/settings">
   <h2>SEO-Monitoring</h2>
+  <input type="hidden" name="seo_form" value="1">
   <label><input type="checkbox" name="seo_enabled" {{ 'checked' if s.get('seo_enabled')=='true' else '' }}> Aktiviert</label>
   <label>GSC-Property <input type="text" name="gsc_property" value="{{ s.get('gsc_property','') }}" placeholder="https://example.de/"></label>
   <label>GA4-Property-ID <input type="text" name="ga4_property_id" value="{{ s.get('ga4_property_id','') }}" placeholder="properties/123456789"></label>
   <label>SE-Ranking API-Key <input type="password" name="seranking_api_key" value="{{ s.get('seranking_api_key','') }}"></label>
   <label>SE-Ranking Projekt-ID <input type="text" name="seranking_project_id" value="{{ s.get('seranking_project_id','') }}"></label>
-
   <button type="submit">Speichern</button>
 </form>
 
@@ -214,17 +217,25 @@ def settings_page():
 
 @app.route("/settings", methods=["POST"])
 def settings_save():
+    """Speichert nur die Felder des tatsächlich abgeschickten Formulars (PartnerNet
+    ODER SEO-Monitoring -- getrennte <form>-Bloecke im Template), damit ein Teil-Update
+    nicht versehentlich die Werte des jeweils anderen Formulars mit Leerstrings
+    ueberschreibt (siehe Bug: SE-Ranking-Update loeschte die Sheet-ID)."""
     form = request.form
+    is_seo_form = "seo_form" in form
+
     with _store() as store:
-        store.set_setting("marketplace", form.get("marketplace", "").strip())
-        store.set_setting("currency", form.get("currency", "").strip())
-        store.set_setting("gsheet_sheet_id", form.get("gsheet_sheet_id", "").strip())
-        store.set_setting("gsheet_gid", form.get("gsheet_gid", "").strip())
-        store.set_setting("seo_enabled", "true" if form.get("seo_enabled") else "false")
-        store.set_setting("gsc_property", form.get("gsc_property", "").strip())
-        store.set_setting("ga4_property_id", form.get("ga4_property_id", "").strip())
-        store.set_setting("seranking_api_key", form.get("seranking_api_key", "").strip())
-        store.set_setting("seranking_project_id", form.get("seranking_project_id", "").strip())
+        if is_seo_form:
+            store.set_setting("seo_enabled", "true" if form.get("seo_enabled") else "false")
+            store.set_setting("gsc_property", form.get("gsc_property", "").strip())
+            store.set_setting("ga4_property_id", form.get("ga4_property_id", "").strip())
+            store.set_setting("seranking_api_key", form.get("seranking_api_key", "").strip())
+            store.set_setting("seranking_project_id", form.get("seranking_project_id", "").strip())
+        else:
+            store.set_setting("marketplace", form.get("marketplace", "").strip())
+            store.set_setting("currency", form.get("currency", "").strip())
+            store.set_setting("gsheet_sheet_id", form.get("gsheet_sheet_id", "").strip())
+            store.set_setting("gsheet_gid", form.get("gsheet_gid", "").strip())
     return redirect("/settings?saved=1")
 
 
