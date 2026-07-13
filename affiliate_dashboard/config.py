@@ -22,7 +22,7 @@ DEFAULTS = {
     "inbox_dir": "data/inbox",
     "archive_dir": "data/archive",
     "db_path": "data/affiliate.db",
-    "out_file": "dashboard.html",
+    "out_file": "data/dashboard.html",
     "open_browser": True,
     "detail_top_n": 500,
     "s3": {
