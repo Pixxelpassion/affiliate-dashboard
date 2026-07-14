@@ -1,6 +1,7 @@
 """Google Search Console API: Impressionen/Klicks/CTR/Position je Tag+Seite+Keyword.
 
-Nutzt die Search Analytics API (``searchAnalytics.query``), gefiltert auf eine einzelne
+Nutzt die Search Analytics API (``searchanalytics.query`` -- Ressourcenname im Google-API-
+Discovery-Dokument ist kleingeschrieben, nicht ``searchAnalytics``), gefiltert auf eine einzelne
 Seite (volle URL) und eine Liste von Keywords. Die API verknuepft Filter innerhalb einer
 Filtergruppe per UND, mehrere Filtergruppen per ODER -- daher eine Filtergruppe
 (Seite + Keyword) je gewuenschtem Keyword.
@@ -43,7 +44,7 @@ def fetch_daily(service, property_url: str, page_path: str, keywords: list[str],
         ],
         "rowLimit": _ROW_LIMIT,
     }
-    response = service.searchAnalytics().query(siteUrl=property_url, body=body).execute()
+    response = service.searchanalytics().query(siteUrl=property_url, body=body).execute()
 
     rows = []
     for r in response.get("rows", []):
