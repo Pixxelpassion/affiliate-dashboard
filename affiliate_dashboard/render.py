@@ -300,6 +300,11 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
 .btn-primary,.btn-secondary{font-family:var(--body-font);padding:.5rem 1rem;border-radius:8px;font-weight:600;font-size:.88rem;cursor:pointer}
 .btn-primary{border:1px solid var(--pp-green-dark);background:var(--pp-green);color:var(--pp-ink)}
 .btn-secondary{border:1px solid var(--pp-border);background:var(--pp-card);color:var(--pp-ink)}
+.seo-event-list{margin-top:.8rem;display:flex;flex-direction:column;gap:.4rem}
+.seo-event-item{display:flex;align-items:center;gap:.6rem;font-size:.85rem;padding:.4rem .6rem;border:1px solid var(--pp-border);border-radius:8px;background:var(--pp-bg2)}
+.seo-event-item .ev-date{font-weight:600;color:var(--pp-green-dark);white-space:nowrap}
+.seo-event-item .ev-text{flex:1}
+.seo-event-item .ev-del{border:1px solid var(--pp-border);background:var(--pp-card);border-radius:6px;padding:.2rem .55rem;cursor:pointer;font-size:.8rem;color:var(--pp-neg)}
 </style>
 </head>
 <body>
@@ -366,6 +371,7 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
       </label>
       <button type="button" id="seoEventSave" class="btn-primary">Event speichern</button>
     </div>
+    <div id="seoEventList" class="seo-event-list"></div>
     <div class="note" id="seoEventNote">Events werden serverseitig gespeichert.</div>
   </div>
 </main>
@@ -581,6 +587,27 @@ async function postSeoEvent(page, date, text){
     body: JSON.stringify({page, date, text}),
   });
 }
+async function deleteSeoEvent(id){
+  await fetch('/api/seo/events/'+id, {method: 'DELETE'});
+}
+function renderSeoEventList(){
+  const list = seoEvents.filter(e => e.page === seoPage).sort((a,b)=>a.date.localeCompare(b.date));
+  document.getElementById('seoEventList').innerHTML = list.map(e =>
+    '<div class="seo-event-item">'+
+      '<span class="ev-date">'+esc(e.date)+'</span>'+
+      '<span class="ev-text">'+esc(e.text)+'</span>'+
+      '<button type="button" class="ev-del" data-id="'+e.id+'">Löschen</button>'+
+    '</div>'
+  ).join('') || '<div class="note">Noch keine Events für diese Seite.</div>';
+  document.querySelectorAll('#seoEventList .ev-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await deleteSeoEvent(btn.dataset.id);
+      seoEvents = await loadSeoEvents();
+      renderSeoEventList();
+      renderSeoChart();
+    });
+  });
+}
 function currentSeoPage(){ return SEO.pages.find(p => p.url === seoPage); }
 
 function renderSeoControls(){
@@ -622,6 +649,22 @@ function weekBucketOf(dateStr){
   return d.toISOString().slice(0, 10);
 }
 
+// Gleichmaessig ueber den Index verteilte Tick-Positionen (statt "erste Woche je
+// Monat", was bei Wochendaten durch unterschiedlich viele Wochen/Monat optisch
+// unregelmaessig wirkt). ``targetCount`` ist eine Ober-Richtgroesse.
+function evenTickIndices(dates, targetCount){
+  const n = dates.length;
+  if(n <= targetCount) return dates.map((_,i)=>i);
+  const step = (n-1)/(targetCount-1);
+  const idx = new Set();
+  for(let k=0;k<targetCount;k++) idx.add(Math.round(k*step));
+  return [...idx].sort((a,b)=>a-b);
+}
+function shortDateLabel(dateStr, showYear){
+  const [y,m,d] = dateStr.split('-');
+  return d+'.'+m+'.' + (showYear ? y.slice(2) : '');
+}
+
 function renderSeoChart(){
   const page = currentSeoPage();
   if(!page) return;
@@ -654,9 +697,13 @@ function renderSeoChart(){
   for(let k=0;k<=5;k++){ const val=minV+(maxV-minV)*k/5, yy=y(val);
     svg+='<line class="gl" x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'"/>';
     svg+='<text class="lbl" x="'+(padL-8)+'" y="'+(yy+4)+'" text-anchor="end">'+Math.round(val)+'</text>'; }
-  monthTickIndices(dates).forEach(i => { const xx=x(i);
+  let lastTickYear = null;
+  evenTickIndices(dates, 11).forEach(i => { const xx=x(i);
+    const year = dates[i].slice(0,4);
+    const label = shortDateLabel(dates[i], year !== lastTickYear);
+    lastTickYear = year;
     svg+='<line class="gl" x1="'+xx+'" y1="'+padT+'" x2="'+xx+'" y2="'+(H-padB)+'"/>';
-    svg+='<text class="lbl" x="'+xx+'" y="'+(H-padB+18)+'" text-anchor="middle">'+esc(dates[i].slice(0,7))+'</text>'; });
+    svg+='<text class="lbl" x="'+xx+'" y="'+(H-padB+18)+'" text-anchor="middle">'+esc(label)+'</text>'; });
   svg+='<line class="axis" x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+(H-padB)+'"/>';
   svg+='<line class="axis" x1="'+padL+'" y1="'+(H-padB)+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"/>';
   const y100 = y(100);
@@ -698,7 +745,7 @@ function renderSeoChart(){
     '<span style="display:inline-block;width:12px;height:12px;background:'+s.color+';margin-right:.3rem;vertical-align:middle;border:1px solid #ccc;"></span>'+
     esc(s.label)+'</span>').join('');
   document.getElementById('seoChartCap').innerHTML = legend;
-  document.getElementById('seoCount').textContent = dates.length+' Tage · '+events.length+' Event(s)';
+  document.getElementById('seoCount').textContent = dates.length+' Wochen · '+events.length+' Event(s)';
 }
 
 async function renderSeo(){
@@ -706,6 +753,7 @@ async function renderSeo(){
   seoEvents = await loadSeoEvents();
   renderSeoControls();
   renderSeoChart();
+  renderSeoEventList();
 }
 
 // Initialisierung
@@ -752,6 +800,7 @@ function init(){
       seoSelectedKeys = new Set();
       renderSeoControls();
       renderSeoChart();
+      renderSeoEventList();
     });
 
     document.getElementById('seoEventSave').addEventListener('click', async () => {
@@ -762,6 +811,7 @@ function init(){
       seoEvents = await loadSeoEvents();
       document.getElementById('seoEventText').value = '';
       renderSeoChart();
+      renderSeoEventList();
     });
   }
 
