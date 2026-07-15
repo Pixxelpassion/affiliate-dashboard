@@ -670,33 +670,58 @@ function renderSeoChart(){
   if(!page) return;
   const dates = page.dates;
   const events = seoEvents.filter(e => e.page === page.url).sort((a,b)=>a.date.localeCompare(b.date));
+
+  const series = page.series.filter(s => seoSelectedKeys.has(s.key))
+    .map((s, si) => ({...s, color: PALETTE[si % PALETTE.length]}));
+  const leftSeries = series.filter(s => s.unit === 'count');
+  const rightSeries = series.filter(s => s.unit === 'position');
+  const idxSeries = series.filter(s => s.unit === 'percent' || s.unit === 'seconds');
+
+  const W=1000,H=440,padL=60,padR=46,padT=20,padB=58;
+  const innerW=W-padL-padR, innerH=H-padT-padB;
+  const x = i => padL + (dates.length<=1?innerW/2 : innerW*i/(dates.length-1));
+
+  // Linke Achse: echte Zahlen (Seitenviews/Impressionen/Klicks), 0 unten
+  let leftMax = 0;
+  leftSeries.forEach(s => s.values.forEach(v => { if(v!==null && v>leftMax) leftMax = v; }));
+  leftMax = leftMax * 1.08 || 1;
+  const yLeft = v => padT + innerH*(1 - v/leftMax);
+
+  // Rechte Achse: Position, feste Skala 1 (oben, beste Position) bis 100 (unten)
+  const yRight = v => padT + innerH*((v-1)/99);
+
+  // Dritte, unbeschriftete Skala fuer CTR/Engagement-Zeit (andere Einheiten) --
+  // wie zuvor auf einen Referenzwert = 100 normalisiert, da diese keine eigene
+  // sichtbare Achse bekommen (siehe Nutzer-Entscheidung: gemischte Skalen).
   const refDate = events.length ? events[0].date : dates[0];
   let refIdx = dates.indexOf(weekBucketOf(refDate));
   if(refIdx < 0) refIdx = 0;
-
-  const series = page.series.filter(s => seoSelectedKeys.has(s.key));
-  const W=1000,H=440,padL=60,padR=24,padT=20,padB=58;
-  const innerW=W-padL-padR, innerH=H-padT-padB;
-
-  const normed = series.map((s, si) => {
+  const idxNormed = idxSeries.map(s => {
     let ref = s.values[refIdx];
     if(ref === null || ref === undefined || ref === 0) ref = s.values.find(v => v!==null && v!==undefined && v!==0);
     const pts = s.values.map(v => (v===null || v===undefined || !ref) ? null : (v/ref*100));
-    return {...s, color: PALETTE[si % PALETTE.length], pts};
+    return {...s, pts};
   });
-
-  let maxV = 100, minV = 100;
-  normed.forEach(s => s.pts.forEach(v => { if(v!==null){ if(v>maxV)maxV=v; if(v<minV)minV=v; } }));
-  const pad = (maxV-minV)*0.08 || 15;
-  maxV += pad; minV -= pad*0.4;
-
-  const x = i => padL + (dates.length<=1?innerW/2 : innerW*i/(dates.length-1));
-  const y = v => padT + innerH*(1-(v-minV)/((maxV-minV)||1));
+  let idxMax = 100, idxMin = 100;
+  idxNormed.forEach(s => s.pts.forEach(v => { if(v!==null){ if(v>idxMax)idxMax=v; if(v<idxMin)idxMin=v; } }));
+  const idxPad = (idxMax-idxMin)*0.08 || 15;
+  idxMax += idxPad; idxMin -= idxPad*0.4;
+  const yIdx = v => padT + innerH*(1-(v-idxMin)/((idxMax-idxMin)||1));
 
   let svg='';
-  for(let k=0;k<=5;k++){ const val=minV+(maxV-minV)*k/5, yy=y(val);
-    svg+='<line class="gl" x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'"/>';
-    svg+='<text class="lbl" x="'+(padL-8)+'" y="'+(yy+4)+'" text-anchor="end">'+Math.round(val)+'</text>'; }
+
+  // Linke Achse (echte Werte)
+  if(leftSeries.length){
+    for(let k=0;k<=5;k++){ const val=leftMax*k/5, yy=yLeft(val);
+      svg+='<line class="gl" x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'"/>';
+      svg+='<text class="lbl" x="'+(padL-8)+'" y="'+(yy+4)+'" text-anchor="end">'+esc(shortNum(val))+'</text>'; }
+  }
+  // Rechte Achse (Position, 1 oben / 100 unten)
+  if(rightSeries.length){
+    [1,20,40,60,80,100].forEach(val => { const yy=yRight(val);
+      svg+='<text class="lbl" x="'+(W-padR+8)+'" y="'+(yy+4)+'" text-anchor="start">'+val+'</text>'; });
+  }
+
   let lastTickYear = null;
   evenTickIndices(dates, 11).forEach(i => { const xx=x(i);
     const year = dates[i].slice(0,4);
@@ -706,8 +731,11 @@ function renderSeoChart(){
     svg+='<text class="lbl" x="'+xx+'" y="'+(H-padB+18)+'" text-anchor="middle">'+esc(label)+'</text>'; });
   svg+='<line class="axis" x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+(H-padB)+'"/>';
   svg+='<line class="axis" x1="'+padL+'" y1="'+(H-padB)+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"/>';
-  const y100 = y(100);
-  svg += '<line x1="'+padL+'" y1="'+y100+'" x2="'+(W-padR)+'" y2="'+y100+'" stroke="#9aa08f" stroke-dasharray="2,3" stroke-width="1"/>';
+  if(rightSeries.length) svg+='<line class="axis" x1="'+(W-padR)+'" y1="'+padT+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"/>';
+  if(idxSeries.length){
+    const y100 = yIdx(100);
+    svg += '<line x1="'+padL+'" y1="'+y100+'" x2="'+(W-padR)+'" y2="'+y100+'" stroke="#9aa08f" stroke-dasharray="2,3" stroke-width="1"/>';
+  }
 
   events.forEach(ev => {
     const i = dates.indexOf(weekBucketOf(ev.date));
@@ -719,29 +747,37 @@ function renderSeoChart(){
       'onmouseenter="showTip(event,\''+tipHtml.replace(/'/g,"\\'")+'\')" onmousemove="moveTip(event)" onmouseleave="hideTip()"/>';
   });
 
-  normed.forEach(s => {
+  function drawSeries(s, yFn, pts){
     let segment = [], d = '';
-    s.pts.forEach((v,i) => {
+    pts.forEach((v,i) => {
       if(v === null){ if(segment.length>1) d += (d?' M':'M')+segment.join(' L'); segment = []; return; }
-      segment.push(x(i)+' '+y(v));
+      segment.push(x(i)+' '+yFn(v));
     });
     if(segment.length>1) d += (d?' M':'M')+segment.join(' L');
     if(d) svg += '<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="2.4" stroke-linejoin="round"/>';
 
-    s.pts.forEach((v,i) => {
+    pts.forEach((v,i) => {
       if(v === null) return;
       const tipHtml = '<b>'+esc(s.label)+'</b> · '+esc(dates[i])+'<br>'+esc(seoFmtRaw(s.values[i], s.unit));
-      svg += '<circle cx="'+x(i)+'" cy="'+y(v)+'" r="6" fill="transparent" '+
+      svg += '<circle cx="'+x(i)+'" cy="'+yFn(v)+'" r="6" fill="transparent" '+
         'onmouseenter="showTip(event,\''+tipHtml.replace(/'/g,"\\'")+'\')" onmousemove="moveTip(event)" onmouseleave="hideTip()"/>';
-      svg += '<circle cx="'+x(i)+'" cy="'+y(v)+'" r="2.6" fill="'+s.color+'" style="pointer-events:none"/>';
+      svg += '<circle cx="'+x(i)+'" cy="'+yFn(v)+'" r="2.6" fill="'+s.color+'" style="pointer-events:none"/>';
     });
-  });
+  }
+
+  leftSeries.forEach(s => drawSeries(s, yLeft, s.values));
+  rightSeries.forEach(s => drawSeries(s, yRight, s.values));
+  idxNormed.forEach(s => drawSeries(s, yIdx, s.pts));
 
   document.getElementById('seoChart').innerHTML = svg;
 
-  let legend = '<b>'+esc(page.url)+'</b> · Wochenwerte, Index = 100 in der Woche ab '+esc(dates[refIdx])+
-    (events.length ? ' (erstes Event)' : ' (erster Datenpunkt)') + ' · Position: niedriger = besser<br>';
-  legend += normed.map(s => '<span style="display:inline-block;margin-right:1rem;">'+
+  const legendParts = [];
+  if(leftSeries.length) legendParts.push('Seitenviews/Impressionen/Klicks: linke Achse (echte Werte)');
+  if(rightSeries.length) legendParts.push('Position: rechte Achse (1 oben = beste Position, 100 unten)');
+  if(idxSeries.length) legendParts.push('CTR/Engagement-Zeit: indexiert, Referenzwoche '+esc(dates[refIdx])+
+    (events.length ? ' (erstes Event)' : ' (erster Datenpunkt)') + ' = 100');
+  let legend = '<b>'+esc(page.url)+'</b> · Wochenwerte · '+legendParts.join(' · ')+'<br>';
+  legend += series.map(s => '<span style="display:inline-block;margin-right:1rem;">'+
     '<span style="display:inline-block;width:12px;height:12px;background:'+s.color+';margin-right:.3rem;vertical-align:middle;border:1px solid #ccc;"></span>'+
     esc(s.label)+'</span>').join('');
   document.getElementById('seoChartCap').innerHTML = legend;
