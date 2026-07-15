@@ -15,6 +15,7 @@ lokale Entwicklung!) ungeschuetzt -- im Produktivbetrieb MUESSEN beide Env-Vars 
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 
@@ -25,12 +26,67 @@ from .config import BASE_DIR, Config
 from .run import run_once
 from .settings_store import SettingsStore
 
+try:
+    import fcntl  # nur auf Linux/Unix verfuegbar (Produktivserver)
+except ImportError:
+    fcntl = None  # lokale Windows-Entwicklung: kein Cross-Prozess-Lock noetig
+
 app = Flask(__name__)
 
 _SETTINGS_DB = BASE_DIR / "data" / "settings.db"
-_sync_lock = threading.Lock()
-_sync_running = False
-_last_sync_result: dict = {}
+_SYNC_LOCK_PATH = BASE_DIR / "data" / "sync.lock"
+
+# gunicorn laeuft mit mehreren Worker-PROZESSEN (-w 4) -- ein einfaches
+# threading.Lock() waere je Prozess getrennt und wuerde NICHT verhindern, dass
+# mehrere Worker gleichzeitig synchronisieren. Auf Linux nutzen wir daher einen
+# echten Datei-Lock (fcntl.flock) auf eine gemeinsame Datei im data/-Volume, das
+# von allen Workern geteilt wird. Lokal (Windows, ein einzelner Flask-Prozess)
+# reicht ein simples threading.Lock().
+_local_sync_lock = threading.Lock()
+
+
+def _try_acquire_sync_lock():
+    """Liefert ein offenes File-Handle (muss bis Sync-Ende offen bleiben) oder
+    ``None``, wenn bereits ein anderer Worker synchronisiert."""
+    if fcntl is None:
+        return object() if _local_sync_lock.acquire(blocking=False) else None
+    _SYNC_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(_SYNC_LOCK_PATH, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fh
+    except OSError:
+        fh.close()
+        return None
+
+
+def _release_sync_lock(handle) -> None:
+    if handle is None:
+        return
+    if fcntl is None:
+        _local_sync_lock.release()
+        return
+    try:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    handle.close()
+
+
+def _is_sync_running() -> bool:
+    if fcntl is None:
+        return _local_sync_lock.locked()
+    if not _SYNC_LOCK_PATH.exists():
+        return False
+    fh = open(_SYNC_LOCK_PATH, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        return False  # Lock war frei -> niemand synchronisiert gerade
+    except OSError:
+        return True
+    finally:
+        fh.close()
 
 
 def _store() -> SettingsStore:
@@ -83,18 +139,20 @@ def index():
 
 @app.route("/api/sync", methods=["POST"])
 def api_sync():
-    if not _sync_lock.acquire(blocking=False):
+    lock_handle = _try_acquire_sync_lock()
+    if lock_handle is None:
         return jsonify({"status": "already_running"}), 409
 
     def _worker():
-        global _last_sync_result
         try:
             cfg = _cfg()
-            _last_sync_result = {"status": "ok", **run_once(cfg)}
+            result = {"status": "ok", **run_once(cfg)}
         except Exception as exc:  # noqa: BLE001
-            _last_sync_result = {"status": "error", "message": str(exc)}
+            result = {"status": "error", "message": str(exc)}
         finally:
-            _sync_lock.release()
+            with _store() as store:
+                store.set_meta("last_sync_result", json.dumps(result))
+            _release_sync_lock(lock_handle)
 
     threading.Thread(target=_worker, daemon=True).start()
     return jsonify({"status": "started"}), 202
@@ -103,10 +161,13 @@ def api_sync():
 @app.route("/api/status")
 def api_status():
     cfg = _cfg()
+    with _store() as store:
+        raw = store.get_meta("last_sync_result")
+    last_sync = json.loads(raw) if raw else {}
     return jsonify({
         "dashboard_exists": cfg.path("out_file").exists(),
-        "sync_running": _sync_lock.locked(),
-        "last_sync": _last_sync_result,
+        "sync_running": _is_sync_running(),
+        "last_sync": last_sync,
         "seo_enabled": bool(cfg.get("seo", {}).get("enabled")),
     })
 

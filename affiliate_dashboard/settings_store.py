@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS seo_events (
     date TEXT NOT NULL,
     text TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 # Bekannte Skalar-Settings: Schluessel in der `settings`-Tabelle -> Pfad im
@@ -120,6 +125,19 @@ class SettingsStore:
 
     def delete_event(self, event_id: int) -> None:
         self.conn.execute("DELETE FROM seo_events WHERE id = ?", (event_id,))
+        self.conn.commit()
+
+    # --- Prozessuebergreifender Laufzeitzustand -------------------------------
+    # (z. B. letztes Sync-Ergebnis; gunicorn laeuft mit mehreren Worker-Prozessen,
+    # normale Python-Variablen sind NICHT zwischen ihnen geteilt -- die DB schon.)
+    def get_meta(self, key: str, default=None):
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value)
+        )
         self.conn.commit()
 
     # --- Config-kompatibles Dict ----------------------------------------------
