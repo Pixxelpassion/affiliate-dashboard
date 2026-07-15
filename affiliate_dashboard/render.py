@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
+from datetime import date as _date, datetime, timedelta
 from pathlib import Path
 
 _LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo_pixxelpassion.webp"
@@ -34,10 +34,77 @@ def _payload(monthly, meta, seo=None):
             "seo": _seo_payload(seo)}
 
 
+def _week_bucket(date_str: str) -> str:
+    """Montag der ISO-Kalenderwoche des Datums, als ``YYYY-MM-DD`` (Bucket-Schluessel
+    fuer die Wochenansicht -- glaettet die naturgemaess verrauschten Tageswerte)."""
+    d = _date.fromisoformat(date_str)
+    monday = d - timedelta(days=d.weekday())
+    return monday.isoformat()
+
+
+def _aggregate_weekly_gsc(rows: list[dict], page_url: str) -> list[dict]:
+    """GSC-Zeilen je (Wochenbeginn, Keyword): Impressionen/Klicks summiert, CTR/Position
+    gemittelt."""
+    buckets: dict[tuple, dict] = {}
+    for r in rows:
+        key = (_week_bucket(r["date"]), r["query"])
+        b = buckets.setdefault(key, {"impressions": 0.0, "clicks": 0.0, "ctr_sum": 0.0, "pos_sum": 0.0, "n": 0})
+        b["impressions"] += float(r.get("impressions") or 0)
+        b["clicks"] += float(r.get("clicks") or 0)
+        b["ctr_sum"] += float(r.get("ctr") or 0)
+        b["pos_sum"] += float(r.get("position") or 0)
+        b["n"] += 1
+    return [
+        {
+            "date": week, "page": page_url, "query": query,
+            "impressions": round(b["impressions"]),
+            "clicks": round(b["clicks"]),
+            "ctr": b["ctr_sum"] / b["n"] if b["n"] else 0.0,
+            "position": round(b["pos_sum"] / b["n"], 2) if b["n"] else 0.0,
+        }
+        for (week, query), b in buckets.items()
+    ]
+
+
+def _aggregate_weekly_ga4(rows: list[dict], page_url: str) -> list[dict]:
+    """GA4-Zeilen je Wochenbeginn: Seitenviews summiert, Engagement-Zeit gemittelt."""
+    buckets: dict[str, dict] = {}
+    for r in rows:
+        key = _week_bucket(r["date"])
+        b = buckets.setdefault(key, {"pageviews": 0.0, "eng_sum": 0.0, "n": 0})
+        b["pageviews"] += float(r.get("pageviews") or 0)
+        b["eng_sum"] += float(r.get("avg_engagement_seconds") or 0)
+        b["n"] += 1
+    return [
+        {
+            "date": week, "page": page_url,
+            "pageviews": round(b["pageviews"]),
+            "avg_engagement_seconds": round(b["eng_sum"] / b["n"], 1) if b["n"] else 0.0,
+        }
+        for week, b in buckets.items()
+    ]
+
+
+def _aggregate_weekly_rank(rows: list[dict], page_url: str) -> list[dict]:
+    """SE-Ranking-Zeilen je (Wochenbeginn, Keyword): Position gemittelt."""
+    buckets: dict[tuple, dict] = {}
+    for r in rows:
+        key = (_week_bucket(r["date"]), r["keyword"])
+        b = buckets.setdefault(key, {"pos_sum": 0.0, "n": 0})
+        b["pos_sum"] += float(r.get("position") or 0)
+        b["n"] += 1
+    return [
+        {"date": week, "page": page_url, "keyword": keyword,
+         "position": round(b["pos_sum"] / b["n"], 2) if b["n"] else 0.0}
+        for (week, keyword), b in buckets.items()
+    ]
+
+
 def _seo_payload(seo):
-    """SEO-Rohdaten (gsc/ga4/rank je Datum+Seite(+Keyword)) in eine je Seite
-    datumsausgerichtete Serien-Liste umformen -- fertig fuer den normalisierten
-    Mehrlinien-Chart im Dashboard. ``None``, wenn SEO-Monitoring nicht aktiv ist.
+    """SEO-Rohdaten (gsc/ga4/rank je Datum+Seite(+Keyword)) zu Wochen-Buckets
+    aggregieren und in eine je Seite datumsausgerichtete Serien-Liste umformen --
+    fertig fuer den normalisierten Mehrlinien-Chart im Dashboard. ``None``, wenn
+    SEO-Monitoring nicht aktiv ist.
     """
     if not seo or not seo.get("pages"):
         return None
@@ -51,9 +118,9 @@ def _seo_payload(seo):
         page_url = entry["url"]
         keywords = entry.get("keywords", [])
 
-        page_gsc = [r for r in gsc_rows if r["page"] == page_url]
-        page_ga4 = [r for r in ga4_rows if r["page"] == page_url]
-        page_rank = [r for r in rank_rows if r["page"] == page_url]
+        page_gsc = _aggregate_weekly_gsc([r for r in gsc_rows if r["page"] == page_url], page_url)
+        page_ga4 = _aggregate_weekly_ga4([r for r in ga4_rows if r["page"] == page_url], page_url)
+        page_rank = _aggregate_weekly_rank([r for r in rank_rows if r["page"] == page_url], page_url)
 
         dates = sorted({r["date"] for r in page_gsc}
                         | {r["date"] for r in page_ga4}
@@ -545,13 +612,23 @@ function seoFmtRaw(raw, unit){
   return fmtNum.format(raw);
 }
 
+function weekBucketOf(dateStr){
+  // Montag der ISO-Kalenderwoche, wie serverseitig in render.py::_week_bucket() --
+  // Events tragen ein exaktes Tagesdatum, die Chart-Daten sind aber jetzt
+  // wochenweise gebuckelt, daher hier auf denselben Wochen-Schluessel "einrasten".
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const day = (d.getUTCDay() + 6) % 7; // Montag=0 .. Sonntag=6
+  d.setUTCDate(d.getUTCDate() - day);
+  return d.toISOString().slice(0, 10);
+}
+
 function renderSeoChart(){
   const page = currentSeoPage();
   if(!page) return;
   const dates = page.dates;
   const events = seoEvents.filter(e => e.page === page.url).sort((a,b)=>a.date.localeCompare(b.date));
   const refDate = events.length ? events[0].date : dates[0];
-  let refIdx = dates.indexOf(refDate);
+  let refIdx = dates.indexOf(weekBucketOf(refDate));
   if(refIdx < 0) refIdx = 0;
 
   const series = page.series.filter(s => seoSelectedKeys.has(s.key));
@@ -586,7 +663,7 @@ function renderSeoChart(){
   svg += '<line x1="'+padL+'" y1="'+y100+'" x2="'+(W-padR)+'" y2="'+y100+'" stroke="#9aa08f" stroke-dasharray="2,3" stroke-width="1"/>';
 
   events.forEach(ev => {
-    const i = dates.indexOf(ev.date);
+    const i = dates.indexOf(weekBucketOf(ev.date));
     if(i < 0) return;
     const xx = x(i);
     const tipHtml = '<b>'+esc(ev.date)+'</b><br>'+esc(ev.text);
@@ -615,8 +692,8 @@ function renderSeoChart(){
 
   document.getElementById('seoChart').innerHTML = svg;
 
-  let legend = '<b>'+esc(page.url)+'</b> · Index = 100 am Referenzdatum ('+esc(dates[refIdx])+
-    (events.length ? ' – erstes Event' : ' – erster Datenpunkt') + ') · Position: niedriger = besser<br>';
+  let legend = '<b>'+esc(page.url)+'</b> · Wochenwerte, Index = 100 in der Woche ab '+esc(dates[refIdx])+
+    (events.length ? ' (erstes Event)' : ' (erster Datenpunkt)') + ' · Position: niedriger = besser<br>';
   legend += normed.map(s => '<span style="display:inline-block;margin-right:1rem;">'+
     '<span style="display:inline-block;width:12px;height:12px;background:'+s.color+';margin-right:.3rem;vertical-align:middle;border:1px solid #ccc;"></span>'+
     esc(s.label)+'</span>').join('');
