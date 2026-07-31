@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS seo_events (
     text TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS product_tabs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    label           TEXT NOT NULL,
+    gid             TEXT NOT NULL,
+    ga4_property_id TEXT,
+    site_base_url   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -50,8 +58,9 @@ _SETTING_PATHS = {
     "ga4_property_id": ("seo", "ga4", "property_id"),
     "seranking_api_key": ("seo", "seranking", "api_key"),
     "seranking_project_id": ("seo", "seranking", "project_id"),
+    "products_enabled": ("products", "enabled"),
 }
-_BOOL_KEYS = {"seo_enabled"}
+_BOOL_KEYS = {"seo_enabled", "products_enabled"}
 
 
 class SettingsStore:
@@ -101,6 +110,26 @@ class SettingsStore:
 
     def delete_page(self, page_id: int) -> None:
         self.conn.execute("DELETE FROM seo_pages WHERE id = ?", (page_id,))
+        self.conn.commit()
+
+    # --- Produkt-Tabs (Produkt-Lebenszyklus-Tab) -------------------------------
+    def list_product_tabs(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, label, gid, ga4_property_id, site_base_url FROM product_tabs ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_product_tab(self, label: str, gid: str, ga4_property_id: str = "",
+                        site_base_url: str = "") -> None:
+        self.conn.execute(
+            """INSERT INTO product_tabs (label, gid, ga4_property_id, site_base_url)
+               VALUES (?, ?, ?, ?)""",
+            (label.strip(), gid.strip(), ga4_property_id.strip(), site_base_url.strip()),
+        )
+        self.conn.commit()
+
+    def delete_product_tab(self, tab_id: int) -> None:
+        self.conn.execute("DELETE FROM product_tabs WHERE id = ?", (tab_id,))
         self.conn.commit()
 
     # --- SEO-Events (Livegang-Marker) -----------------------------------------
@@ -156,5 +185,11 @@ class SettingsStore:
             node[path[-1]] = value
         data["seo"]["pages"] = [
             {"url": p["url"], "keywords": p["keywords"]} for p in self.list_pages()
+        ]
+        data["products"]["tabs"] = [
+            {"label": t["label"], "gid": t["gid"],
+             "ga4_property_id": t["ga4_property_id"] or "",
+             "site_base_url": t["site_base_url"] or ""}
+            for t in self.list_product_tabs()
         ]
         return data

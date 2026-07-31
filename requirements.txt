@@ -14,3 +14,8 @@ google-analytics-data>=0.18      # GA4 Data API (runReport)
 # Nur fuer den Server-Betrieb (server.py, siehe README "Deployment auf Hostinger"):
 flask>=3.0                       # Web-Framework fuer server.py
 gunicorn>=22.0                   # WSGI-Server fuer den Produktivbetrieb (nicht lokal noetig)
+
+# Produkt-Lebenszyklus-Tab (products.enabled=true): keine zusaetzlichen Pakete --
+# der Site-Crawler nutzt nur die Standardbibliothek (urllib, xml.etree.ElementTree,
+# re), die GA4-Abfrage nutzt dieselben google-* Pakete wie oben (setzt ein
+# eingerichtetes SEO-Monitoring-Google-Login voraus, siehe README).

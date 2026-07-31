@@ -73,16 +73,28 @@ NUMERIC_FIELDS = (
     "clicks", "ordered_items", "price", "commission_rate",
 )
 
+# Alias-Set fuer die Produkt-Katalog-Tabs (Tauchpumpen, Motorsensen, ...) --
+# separates Schema von den Umsatz-ALIASES oben, genutzt von
+# products/catalog_reader.py ueber resolve_columns(headers, aliases=PRODUCT_ALIASES).
+PRODUCT_ALIASES: dict[str, set[str]] = {
+    "tracking_id": {"trackingid", "trackingids"},
+    "asin": {"asin", "itemasin"},
+    "test_url": {"test", "testurl", "testartikel", "review", "artikel"},
+    "amazon_url": {"amazon", "amazonurl", "amazonlink", "link"},
+    "category": {"kategorie", "category"},
+}
 
-def resolve_columns(headers: list[str]) -> dict[str, int]:
+
+def resolve_columns(headers: list[str], aliases: dict[str, set[str]] = ALIASES) -> dict[str, int]:
     """Header-Liste auf ``{kanonisches_feld: spaltenindex}`` abbilden.
 
     Das erste passende Header-Vorkommen je Feld gewinnt; unbekannte Spalten
-    werden ignoriert.
+    werden ignoriert. ``aliases`` erlaubt ein anderes Schema als das
+    Standard-Umsatz-``ALIASES`` (z. B. ``PRODUCT_ALIASES`` fuer Katalog-Tabs).
     """
     norm = [normalize_header(h) for h in headers]
     mapping: dict[str, int] = {}
-    for field, variants in ALIASES.items():
+    for field, variants in aliases.items():
         for idx, nh in enumerate(norm):
             if nh and nh in variants:
                 mapping[field] = idx

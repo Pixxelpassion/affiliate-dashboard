@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from pathlib import Path
 
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_from_directory
 from werkzeug.security import check_password_hash
@@ -25,6 +26,9 @@ from werkzeug.security import check_password_hash
 from .config import BASE_DIR, Config
 from .run import run_once
 from .settings_store import SettingsStore
+from .products import ga4_traffic
+from .products.products_run import merge_items
+from .products.store import ProductStore
 
 try:
     import fcntl  # nur auf Linux/Unix verfuegbar (Produktivserver)
@@ -96,6 +100,11 @@ def _store() -> SettingsStore:
 def _cfg() -> Config:
     with _store() as store:
         return Config.from_settings_store(store)
+
+
+def _products_db_path(cfg: Config) -> Path:
+    p = Path(cfg.get("products", {}).get("db_path", "data/products.db"))
+    return p if p.is_absolute() else (BASE_DIR / p)
 
 
 # --- Basic Auth ----------------------------------------------------------------
@@ -201,6 +210,66 @@ def api_seo_events_delete(event_id: int):
     return jsonify({"status": "deleted"})
 
 
+# --- Produkt-Lebenszyklus-API ----------------------------------------------------
+# Katalog/Status/Besucher/Seiten-Links werden LIVE aus products.db gelesen (nicht aus
+# dem in dashboard.html eingebetteten Sync-Snapshot), damit ein manuell gespeicherter
+# Status sofort sichtbar ist, ohne auf den naechsten Sync warten zu muessen.
+
+@app.route("/api/products")
+def api_products():
+    tracking_id = request.args.get("tracking_id", "")
+    cfg = _cfg()
+    with ProductStore(_products_db_path(cfg)) as store:
+        catalog = store.all_catalog()
+        status = store.all_status()
+        visitors = store.all_visitors()
+        page_links = store.all_page_links()
+
+    items = merge_items(catalog, status, visitors, page_links)
+    if tracking_id:
+        items = [it for it in items if it["tracking_id"] == tracking_id]
+    return jsonify({"items": items})
+
+
+@app.route("/api/products/status", methods=["POST"])
+def api_products_status():
+    """Speichert den manuellen Verfuegbarkeits-Status UND ruft synchron die
+    GA4-Besucherzahl der letzten 365 Tage fuer dieses Produkt ab -- genau im Moment
+    des Speicherns, nicht als Teil des automatischen Syncs (siehe Plan-Entscheidung:
+    kein Amazon-Scraping, GA4 nur on-demand beim manuellen Check)."""
+    data = request.get_json(force=True, silent=True) or {}
+    tracking_id = str(data.get("tracking_id", "")).strip()
+    asin = str(data.get("asin", "")).strip()
+    status = str(data.get("status", "")).strip()
+    note = str(data.get("note", "")).strip()
+    if not tracking_id or not asin:
+        return jsonify({"error": "tracking_id und asin sind erforderlich"}), 400
+
+    cfg = _cfg()
+    with ProductStore(_products_db_path(cfg)) as store:
+        checked_at = store.upsert_status(tracking_id, asin, status, note)
+
+        catalog_row = next(
+            (c for c in store.all_catalog() if c["tracking_id"] == tracking_id and c["asin"] == asin),
+            None,
+        )
+        result = {"status": "ok", "checked_at": checked_at}
+
+        tabs = cfg.get("products", {}).get("tabs", [])
+        tab = next((t for t in tabs if t.get("label") == (catalog_row or {}).get("tab_label")), None)
+        property_id = (tab or {}).get("ga4_property_id") or cfg.get("seo", {}).get("ga4", {}).get("property_id")
+        test_url = (catalog_row or {}).get("test_url", "")
+
+        try:
+            pageviews = ga4_traffic.fetch_pageviews(cfg, property_id, test_url)
+            store.upsert_visitors(tracking_id, asin, pageviews)
+            result["pageviews"] = pageviews
+        except Exception as exc:  # noqa: BLE001
+            result["ga4_error"] = str(exc)
+
+    return jsonify(result)
+
+
 # --- Einstellungsseite (serverseitig gerendertes Formular, kein JS noetig) -------
 
 _SETTINGS_TEMPLATE = """
@@ -260,6 +329,37 @@ td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid #e6e8e1}
   <button type="submit">Seite hinzufügen</button>
 </form>
 
+<form method="post" action="/settings">
+  <h2>Produkt-Lebenszyklus</h2>
+  <input type="hidden" name="products_form" value="1">
+  <label><input type="checkbox" name="products_enabled" {{ 'checked' if s.get('products_enabled')=='true' else '' }}> Aktiviert</label>
+  <button type="submit">Speichern</button>
+</form>
+
+<h2>Produkt-Tabs (ein Google-Sheet-Tab je Nische)</h2>
+<table>
+  <tr><th>Label</th><th>gid</th><th>GA4-Property-ID</th><th>Website</th><th></th></tr>
+  {% for t in product_tabs %}
+  <tr>
+    <td>{{ t.label }}</td>
+    <td>{{ t.gid }}</td>
+    <td>{{ t.ga4_property_id }}</td>
+    <td>{{ t.site_base_url }}</td>
+    <td><form method="post" action="/settings/product-tabs/{{ t.id }}/delete" style="margin:0">
+      <button type="submit" class="small-btn">Löschen</button>
+    </form></td>
+  </tr>
+  {% endfor %}
+</table>
+
+<form method="post" action="/settings/product-tabs/add">
+  <label>Label (Nische) <input type="text" name="label" placeholder="Tauchpumpen"></label>
+  <label>Sheet-Tab-ID (gid) <input type="text" name="gid" placeholder="342635093"></label>
+  <label>GA4-Property-ID (optional, sonst SEO-Property) <input type="text" name="ga4_property_id" placeholder="properties/123456789"></label>
+  <label>Website-Basis-URL (für den Crawler) <input type="text" name="site_base_url" placeholder="https://tauchpumpe-tests.de"></label>
+  <button type="submit">Tab hinzufügen</button>
+</form>
+
 <h2>Manueller Sync</h2>
 <form method="post" action="/api/sync-form">
   <button type="submit">Jetzt aktualisieren</button>
@@ -273,7 +373,9 @@ def settings_page():
     with _store() as store:
         s = store.all_settings()
         pages = store.list_pages()
-    return render_template_string(_SETTINGS_TEMPLATE, s=s, pages=pages, saved=request.args.get("saved"))
+        product_tabs = store.list_product_tabs()
+    return render_template_string(_SETTINGS_TEMPLATE, s=s, pages=pages, product_tabs=product_tabs,
+                                   saved=request.args.get("saved"))
 
 
 @app.route("/settings", methods=["POST"])
@@ -284,6 +386,7 @@ def settings_save():
     ueberschreibt (siehe Bug: SE-Ranking-Update loeschte die Sheet-ID)."""
     form = request.form
     is_seo_form = "seo_form" in form
+    is_products_form = "products_form" in form
 
     with _store() as store:
         if is_seo_form:
@@ -292,6 +395,8 @@ def settings_save():
             store.set_setting("ga4_property_id", form.get("ga4_property_id", "").strip())
             store.set_setting("seranking_api_key", form.get("seranking_api_key", "").strip())
             store.set_setting("seranking_project_id", form.get("seranking_project_id", "").strip())
+        elif is_products_form:
+            store.set_setting("products_enabled", "true" if form.get("products_enabled") else "false")
         else:
             store.set_setting("marketplace", form.get("marketplace", "").strip())
             store.set_setting("currency", form.get("currency", "").strip())
@@ -314,6 +419,25 @@ def settings_add_page():
 def settings_delete_page(page_id: int):
     with _store() as store:
         store.delete_page(page_id)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/product-tabs/add", methods=["POST"])
+def settings_add_product_tab():
+    label = request.form.get("label", "").strip()
+    gid = request.form.get("gid", "").strip()
+    ga4_property_id = request.form.get("ga4_property_id", "").strip()
+    site_base_url = request.form.get("site_base_url", "").strip()
+    if label and gid:
+        with _store() as store:
+            store.add_product_tab(label, gid, ga4_property_id, site_base_url)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/product-tabs/<int:tab_id>/delete", methods=["POST"])
+def settings_delete_product_tab(tab_id: int):
+    with _store() as store:
+        store.delete_product_tab(tab_id)
     return redirect("/settings?saved=1")
 
 

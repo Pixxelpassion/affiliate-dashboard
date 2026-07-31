@@ -63,6 +63,12 @@ def run_once(cfg: Config, *, source: str | None = None) -> dict:
         seo_run.sync(cfg)
         seo_payload = seo_run.read_payload(cfg)
 
+    products_payload = None
+    if cfg.get("products", {}).get("enabled"):
+        from .products import products_run
+        products_run.sync(cfg)
+        products_payload = products_run.read_payload(cfg)
+
     out_path = cfg.path("out_file")
     render.render_to_file(
         out_path, all_monthly,
@@ -70,6 +76,7 @@ def run_once(cfg: Config, *, source: str | None = None) -> dict:
         marketplace=cfg.get("marketplace", "amazon.de"),
         currency=cfg.get("currency", "EUR"),
         seo=seo_payload,
+        products=products_payload,
     )
     print(f"Dashboard erzeugt: {out_path}")
     print(f"Datenbank: {db_path} ({len(all_monthly)} Zeilen gesamt)")
@@ -80,6 +87,7 @@ def run_once(cfg: Config, *, source: str | None = None) -> dict:
         "monthly_rows": len(monthly),
         "out_path": str(out_path),
         "seo_enabled": bool(seo_payload),
+        "products_enabled": bool(products_payload),
     }
 
 

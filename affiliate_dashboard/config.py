@@ -44,6 +44,11 @@ DEFAULTS = {
         "seranking": {"api_key": "", "project_id": ""},
         "pages": [],
     },
+    "products": {
+        "enabled": False,
+        "db_path": "data/products.db",
+        "tabs": [],
+    },
 }
 
 

@@ -18,7 +18,7 @@ from pathlib import Path
 _LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo_pixxelpassion.webp"
 
 
-def _payload(monthly, meta, seo=None):
+def _payload(monthly, meta, seo=None, products=None):
     facts = [{
         "month": r["month"],
         "tid": r["tracking_id"],
@@ -31,7 +31,7 @@ def _payload(monthly, meta, seo=None):
     months = sorted({f["month"] for f in facts})
     tids = sorted({f["tid"] for f in facts})
     return {"facts": facts, "months": months, "tids": tids, "meta": meta,
-            "seo": _seo_payload(seo)}
+            "seo": _seo_payload(seo), "products": _products_payload(products)}
 
 
 def _week_bucket(date_str: str) -> str:
@@ -184,6 +184,28 @@ def _seo_payload(seo):
     return {"pages": pages_out} if pages_out else None
 
 
+def _products_payload(products):
+    """Nur zur Tab-Sichtbarkeit/Tracking-ID-Auswahl: welche Tracking-IDs gibt es.
+
+    Die eigentlichen Item-Daten (Status/Besucher/Seiten-Links) werden im Dashboard
+    LIVE per ``GET /api/products`` nachgeladen (siehe ``server.py``), nicht aus
+    diesem statischen Payload -- sonst wuerden manuell gespeicherte
+    Status-Aenderungen nach einem Seiten-Reload erst wieder nach dem naechsten
+    Sync sichtbar, analog zum Grund, warum SEO-Events per API statt eingebettet
+    geladen werden. ``None``, wenn der Produkt-Lebenszyklus-Tab nicht
+    konfiguriert/aktiv ist.
+    """
+    if not products or not products.get("tabs") or not products.get("catalog"):
+        return None
+    from .products.products_run import merge_items
+    items = merge_items(products["catalog"], products.get("status", []),
+                        products.get("visitors", []), products.get("page_links", {}))
+    tracking_ids = sorted({it["tracking_id"] for it in items if it["tracking_id"]})
+    if not tracking_ids:
+        return None
+    return {"tracking_ids": tracking_ids}
+
+
 def _json(obj):
     return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
 
@@ -197,7 +219,7 @@ def _logo_data_uri():
         return ""
 
 
-def build_html(monthly, *, source, marketplace, currency, seo=None):
+def build_html(monthly, *, source, marketplace, currency, seo=None, products=None):
     months = sorted({r["month"] for r in monthly})
     total_earnings = round(sum(float(r.get("earnings") or 0) for r in monthly), 2)
     total_revenue = round(sum(float(r.get("revenue") or 0) for r in monthly), 2)
@@ -210,7 +232,7 @@ def build_html(monthly, *, source, marketplace, currency, seo=None):
         "totalEarnings": total_earnings,
         "totalRevenue": total_revenue,
     }
-    payload = _payload(monthly, meta, seo)
+    payload = _payload(monthly, meta, seo, products)
     html = _TEMPLATE.replace("@@PAYLOAD@@", _json(payload))
     html = html.replace("@@LOGO@@", _logo_data_uri())
     html = html.replace("@@GENERATED@@", meta["generated"])
@@ -219,8 +241,9 @@ def build_html(monthly, *, source, marketplace, currency, seo=None):
     return html
 
 
-def render_to_file(path, monthly, *, source, marketplace, currency, seo=None):
-    html = build_html(monthly, source=source, marketplace=marketplace, currency=currency, seo=seo)
+def render_to_file(path, monthly, *, source, marketplace, currency, seo=None, products=None):
+    html = build_html(monthly, source=source, marketplace=marketplace, currency=currency,
+                       seo=seo, products=products)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(html)
 
@@ -305,6 +328,24 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
 .seo-event-item .ev-date{font-weight:600;color:var(--pp-green-dark);white-space:nowrap}
 .seo-event-item .ev-text{flex:1}
 .seo-event-item .ev-del{border:1px solid var(--pp-border);background:var(--pp-card);border-radius:6px;padding:.2rem .55rem;cursor:pointer;font-size:.8rem;color:var(--pp-neg)}
+.status-badge{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.78rem;font-weight:600;white-space:nowrap}
+.status-available{background:color-mix(in srgb,var(--pp-green) 25%,transparent);color:var(--pp-green-dark)}
+.status-unavailable{background:color-mix(in srgb,var(--pp-neg) 15%,transparent);color:var(--pp-neg)}
+.status-newer,.status-alternative{background:color-mix(in srgb,var(--pp-teal) 18%,transparent);color:var(--pp-teal)}
+.status-unchecked{background:var(--pp-bg2);color:var(--pp-muted)}
+.rec-badge{font-size:.78rem;color:var(--pp-orange);font-weight:600}
+.products-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:60;padding:2rem}
+.products-overlay.hidden{display:none}
+.products-overlay-card{background:var(--pp-card);border-radius:14px;max-width:920px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden}
+.products-overlay-head{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.2rem;border-bottom:1px solid var(--pp-border);font-family:var(--head-font)}
+.products-overlay-list{overflow:auto;padding:1rem 1.2rem;display:flex;flex-direction:column;gap:.7rem}
+.products-check-row{border:1px solid var(--pp-border);border-radius:10px;padding:.7rem .9rem;display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
+.products-check-row .pcr-name{font-weight:600;min-width:200px;flex:1}
+.products-check-row select,.products-check-row input[type=text]{font-family:var(--body-font);padding:.4rem .6rem;font-size:.85rem;border:1px solid var(--pp-border);border-radius:8px;background:var(--pp-bg);color:var(--pp-ink)}
+.products-check-row .pcr-note{flex:2;min-width:180px}
+.pcr-pages{flex-basis:100%;font-size:.78rem;color:var(--pp-muted)}
+.pcr-pages a{color:var(--pp-teal)}
+.pcr-result{font-size:.78rem;color:var(--pp-green-dark);min-width:110px}
 </style>
 </head>
 <body>
@@ -333,6 +374,7 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
     <button class="tab active" data-view="pivot">Pivot (Monat × Tracking-ID)</button>
     <button class="tab" data-view="trend">Trend-Diagramm</button>
     <button class="tab hidden" data-view="seo" id="seoTabBtn">SEO-Monitoring</button>
+    <button class="tab hidden" data-view="products" id="productsTabBtn">Produkte</button>
   </div>
 
   <div class="controls">
@@ -374,13 +416,32 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
     <div id="seoEventList" class="seo-event-list"></div>
     <div class="note" id="seoEventNote">Events werden serverseitig gespeichert.</div>
   </div>
+  <div id="view-products" class="panel hidden">
+    <div class="controls" style="margin-top:0;">
+      <label class="ctl">Tracking-ID:
+        <select id="productsTidSelect"></select>
+      </label>
+      <span class="count" id="productsCount"></span>
+      <button type="button" id="productsCheckBtn" class="btn-primary">Verfügbarkeit prüfen</button>
+    </div>
+    <div id="productsTableWrap" class="wrap"></div>
+  </div>
 </main>
+<div id="productsOverlay" class="products-overlay hidden">
+  <div class="products-overlay-card">
+    <div class="products-overlay-head">
+      <b>Verfügbarkeit prüfen — <span id="productsOverlayTid"></span></b>
+      <button type="button" id="productsOverlayClose" class="btn-secondary">Schließen</button>
+    </div>
+    <div id="productsOverlayList" class="products-overlay-list"></div>
+  </div>
+</div>
 <div class="chart-tooltip" id="chartTooltip"></div>
 <footer>Pixxelpassion · Affiliate-Einnahmen-Dashboard</footer>
 
 <script>
 const DB = @@PAYLOAD@@;
-const FACTS = DB.facts, MONTHS = DB.months, TIDS = DB.tids, META = DB.meta, SEO = DB.seo;
+const FACTS = DB.facts, MONTHS = DB.months, TIDS = DB.tids, META = DB.meta, SEO = DB.seo, PRODUCTS = DB.products;
 
 const fmtEur = new Intl.NumberFormat('de-DE', {style:'currency', currency: META.currency || 'EUR'});
 const fmtNum = new Intl.NumberFormat('de-DE', {maximumFractionDigits: 0});
@@ -792,6 +853,129 @@ async function renderSeo(){
   renderSeoEventList();
 }
 
+// Produkt-Lebenszyklus: Katalog-Zuordnung (welche Tracking-IDs gibt es) kommt aus
+// dem eingebetteten Payload, die eigentlichen Item-Daten (Status/Besucher/
+// "beworben auf") werden LIVE per Fetch geladen -- sonst wuerden manuell
+// gespeicherte Status-Aenderungen nach einem Seiten-Reload erst nach dem
+// naechsten Sync wieder sichtbar (analog zu den SEO-Events).
+let productsTid = null;
+let productsItems = [];
+const STATUS_LABELS = {available:'Vorhanden', unavailable:'Nicht mehr vorhanden',
+  newer_available:'Neueres Produkt vorhanden', alternative_available:'Alternative vorhanden'};
+const STATUS_CLASSES = {available:'status-available', unavailable:'status-unavailable',
+  newer_available:'status-newer', alternative_available:'status-alternative'};
+function statusLabel(s){ return STATUS_LABELS[s] || 'Ungeprüft'; }
+function statusClass(s){ return STATUS_CLASSES[s] || 'status-unchecked'; }
+function medianOf(nums){
+  const s = [...nums].sort((a,b)=>a-b);
+  if(!s.length) return 0;
+  const mid = Math.floor(s.length/2);
+  return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
+}
+function recommendation(it, med){
+  if(it.status === 'unavailable') return (it.pageviews||0) >= med ? 'Alternative suchen' : 'Kann gelöscht werden';
+  if(it.status === 'newer_available' || it.status === 'alternative_available') return 'Prüfen: '+(it.note || '–');
+  return '';
+}
+async function loadProductsItems(tid){
+  try {
+    const resp = await fetch('/api/products?tracking_id='+encodeURIComponent(tid));
+    const data = resp.ok ? await resp.json() : {items: []};
+    return data.items || [];
+  } catch(e){ return []; }
+}
+function renderProductsControls(){
+  document.getElementById('productsTidSelect').innerHTML = PRODUCTS.tracking_ids.map(t =>
+    '<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
+  if(!productsTid) productsTid = PRODUCTS.tracking_ids[0];
+  document.getElementById('productsTidSelect').value = productsTid;
+}
+function renderProductsTable(){
+  const items = productsItems.slice().sort((a,b)=>(b.pageviews||0)-(a.pageviews||0));
+  const med = medianOf(items.map(it=>it.pageviews||0));
+  const rows = items.map(it => {
+    const rec = recommendation(it, med);
+    const visitorsCell = it.pageviews!=null
+      ? fmtNum.format(it.pageviews)+(it.visitors_fetched_at ? ' <span style="color:var(--pp-muted);font-size:.78rem">('+esc(it.visitors_fetched_at.slice(0,10))+')</span>' : '')
+      : '–';
+    return '<tr><td>'+esc(it.name)+'</td><td>'+esc(it.category)+'</td>'+
+      '<td><span class="status-badge '+statusClass(it.status)+'">'+esc(statusLabel(it.status))+'</span></td>'+
+      '<td>'+visitorsCell+'</td>'+
+      '<td>'+(rec ? '<span class="rec-badge">'+esc(rec)+'</span>' : '')+'</td></tr>';
+  }).join('');
+  document.getElementById('productsTableWrap').innerHTML =
+    '<table><thead><tr><th>Produkt</th><th>Kategorie</th><th>Status</th><th>Besucher (365 Tage)</th><th>Empfehlung</th></tr></thead><tbody>'+
+    (rows || '<tr><td colspan="5">Keine Produkte fuer diese Tracking-ID.</td></tr>')+'</tbody></table>';
+  document.getElementById('productsCount').textContent = items.length+' Produkt'+(items.length===1?'':'e');
+}
+async function renderProducts(){
+  if(!PRODUCTS || !PRODUCTS.tracking_ids || !PRODUCTS.tracking_ids.length) return;
+  renderProductsControls();
+  productsItems = await loadProductsItems(productsTid);
+  renderProductsTable();
+}
+async function switchProductsTid(tid){
+  productsTid = tid;
+  productsItems = await loadProductsItems(productsTid);
+  renderProductsTable();
+}
+async function saveProductStatus(tracking_id, asin, status, note, rowEl){
+  const resultEl = rowEl.querySelector('.pcr-result');
+  if(resultEl) resultEl.textContent = 'Speichere …';
+  let data = {};
+  try {
+    const resp = await fetch('/api/products/status', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tracking_id, asin, status, note}),
+    });
+    data = await resp.json().catch(()=>({}));
+  } catch(e){ data = {}; }
+  const it = productsItems.find(x => x.tracking_id===tracking_id && x.asin===asin);
+  if(it){
+    it.status = status; it.note = note;
+    if(typeof data.pageviews === 'number'){ it.pageviews = data.pageviews; it.visitors_fetched_at = new Date().toISOString().slice(0,10); }
+  }
+  if(resultEl){
+    resultEl.textContent = (typeof data.pageviews === 'number')
+      ? 'Gespeichert · '+fmtNum.format(data.pageviews)+' Besucher (365 T.)'
+      : 'Gespeichert · Besucherzahl nicht abrufbar'+(data.ga4_error ? ' ('+esc(data.ga4_error)+')' : '');
+  }
+}
+function openProductsOverlay(){
+  document.getElementById('productsOverlayTid').textContent = productsTid;
+  const items = productsItems;
+  const statusOptions = ['', 'available', 'unavailable', 'newer_available', 'alternative_available'];
+  document.getElementById('productsOverlayList').innerHTML = items.map(it => {
+    const pagesHtml = it.pages.length
+      ? 'Beworben auf: ' + it.pages.map(u=>'<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\//,''))+'</a>').join(', ')
+      : 'Beworben auf: (laut letztem Website-Crawl keine Seite gefunden)';
+    const optionsHtml = statusOptions.map(s =>
+      '<option value="'+s+'"'+((it.status||'')===s?' selected':'')+'>'+(s?esc(statusLabel(s)):'Ungeprüft')+'</option>').join('');
+    return '<div class="products-check-row" data-tid="'+esc(it.tracking_id)+'" data-asin="'+esc(it.asin)+'">'+
+      '<span class="pcr-name">'+esc(it.name)+'</span>'+
+      '<a href="'+esc(it.amazon_url)+'" target="_blank" rel="noopener">Bei Amazon ansehen</a>'+
+      '<select class="pcr-status">'+optionsHtml+'</select>'+
+      '<input type="text" class="pcr-note" placeholder="Notiz (z. B. Nachfolger/Alternative)" value="'+esc(it.note||'')+'">'+
+      '<button type="button" class="btn-primary pcr-save">Speichern</button>'+
+      '<span class="pcr-result"></span>'+
+      '<div class="pcr-pages">'+pagesHtml+'</div>'+
+    '</div>';
+  }).join('') || '<div class="note">Keine Produkte fuer diese Tracking-ID.</div>';
+  document.querySelectorAll('#productsOverlayList .pcr-save').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.products-check-row');
+      const status = row.querySelector('.pcr-status').value;
+      const note = row.querySelector('.pcr-note').value.trim();
+      saveProductStatus(row.dataset.tid, row.dataset.asin, status, note, row);
+    });
+  });
+  document.getElementById('productsOverlay').classList.remove('hidden');
+}
+function closeProductsOverlay(){
+  document.getElementById('productsOverlay').classList.add('hidden');
+  renderProductsTable();
+}
+
 // Initialisierung
 function init(){
   // TID-Auswahl
@@ -821,10 +1005,11 @@ function init(){
     document.querySelectorAll('[id^="view-"]').forEach(p => p.classList.add('hidden'));
     e.target.classList.add('active');
     document.getElementById('view-'+view).classList.remove('hidden');
-    document.querySelector('main > .controls').classList.toggle('hidden', view === 'seo');
+    document.querySelector('main > .controls').classList.toggle('hidden', view === 'seo' || view === 'products');
     if(view==='pivot') renderPivot();
     else if(view==='trend') renderTrend();
     else if(view==='seo') renderSeo();
+    else if(view==='products') renderProducts();
   }));
 
   // SEO-Monitoring (nur sichtbar, wenn Daten vorhanden)
@@ -849,6 +1034,17 @@ function init(){
       renderSeoChart();
       renderSeoEventList();
     });
+  }
+
+  // Produkte (nur sichtbar, wenn Daten vorhanden)
+  if(PRODUCTS && PRODUCTS.tracking_ids && PRODUCTS.tracking_ids.length){
+    document.getElementById('productsTabBtn').classList.remove('hidden');
+
+    document.getElementById('productsTidSelect').addEventListener('change', e => {
+      switchProductsTid(e.target.value);
+    });
+    document.getElementById('productsCheckBtn').addEventListener('click', openProductsOverlay);
+    document.getElementById('productsOverlayClose').addEventListener('click', closeProductsOverlay);
   }
 
   renderCards();

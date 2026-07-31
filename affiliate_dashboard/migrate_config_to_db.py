@@ -45,8 +45,23 @@ def migrate(config_path: str | None = None, db_path=None) -> None:
             store.add_page(url, page.get("keywords", []))
             added += 1
 
+        products = cfg.get("products", {})
+        store.set_setting("products_enabled", "true" if products.get("enabled") else "false")
+        existing_gids = {t["gid"] for t in store.list_product_tabs()}
+        added_tabs = 0
+        for tab in products.get("tabs", []):
+            gid = str(tab.get("gid", ""))
+            if not gid or gid in existing_gids:
+                continue
+            store.add_product_tab(
+                tab.get("label", ""), gid,
+                tab.get("ga4_property_id", ""), tab.get("site_base_url", ""),
+            )
+            added_tabs += 1
+
     print(f"Migration abgeschlossen -> {store_path}")
     print(f"Watchlist-Seiten uebernommen: {added} neu (bereits vorhandene wurden nicht doppelt angelegt)")
+    print(f"Produkt-Tabs uebernommen: {added_tabs} neu (bereits vorhandene wurden nicht doppelt angelegt)")
 
 
 def main(argv=None) -> int:

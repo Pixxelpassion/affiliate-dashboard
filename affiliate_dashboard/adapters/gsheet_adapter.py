@@ -15,13 +15,10 @@ import csv
 import io
 from datetime import datetime
 from pathlib import Path
-from urllib.request import Request, urlopen
 
 from .base import IngestionAdapter, IngestResult
 from .. import columns
-
-_EXPORT_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-_USER_AGENT = "Mozilla/5.0 (affiliate-dashboard; +https://localhost)"
+from ..gsheet_fetch import fetch_csv
 
 
 class GSheetAdapter(IngestionAdapter):
@@ -38,8 +35,7 @@ class GSheetAdapter(IngestionAdapter):
                 "'Jeder mit dem Link kann ansehen' stellen."
             )
 
-        url = _EXPORT_URL.format(sheet_id=sheet_id, gid=gid)
-        text = self._fetch(url)
+        text = self._fetch(sheet_id, gid)
         self._save_snapshot(text, gid)
 
         reader = csv.reader(io.StringIO(text))
@@ -58,18 +54,8 @@ class GSheetAdapter(IngestionAdapter):
         )
 
     # --- intern -----------------------------------------------------------
-    def _fetch(self, url: str) -> str:
-        req = Request(url, headers={"User-Agent": _USER_AGENT})
-        try:
-            with urlopen(req, timeout=120) as resp:  # folgt 30x-Redirects automatisch
-                raw = resp.read()
-        except Exception as exc:  # noqa: BLE001 - verstaendliche Meldung weiterreichen
-            raise RuntimeError(
-                f"Abruf des Google Sheets fehlgeschlagen ({exc}). Pruefe, ob das "
-                f"Sheet veroeffentlicht/link-lesbar ist und sheet_id/gid stimmen."
-            ) from exc
-        # Google liefert UTF-8 (teils mit BOM)
-        return raw.decode("utf-8-sig", errors="replace")
+    def _fetch(self, sheet_id: str, gid: str) -> str:
+        return fetch_csv(sheet_id, gid)
 
     def _save_snapshot(self, text: str, gid: str) -> None:
         try:

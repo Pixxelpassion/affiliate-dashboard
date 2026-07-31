@@ -45,5 +45,18 @@
         "keywords": ["beispiel keyword"]
       }
     ]
+  },
+
+  "products": {
+    "enabled": false,
+    "db_path": "data/products.db",
+    "tabs": [
+      {
+        "label": "Beispiel-Nische",
+        "gid": "0",
+        "ga4_property_id": "",
+        "site_base_url": "https://example.de"
+      }
+    ]
   }
 }

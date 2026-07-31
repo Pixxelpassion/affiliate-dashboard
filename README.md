@@ -157,6 +157,60 @@ Kurzbeschreibung) als senkrechte Marker im Chart hinterlegen.
 leere SE-Ranking-Credits), werden die anderen beiden trotzdem aktualisiert — der Lauf
 protokolliert den Fehler, bricht aber nicht ab.
 
+## Produkt-Lebenszyklus einrichten (optional)
+
+Ein zusätzlicher **„Produkte"**-Tab hilft, pro Tracking-ID/Nische (z. B. „Tauchpumpen",
+„Motorsensen") zu entscheiden: welche Produkte sind bei Amazon nicht mehr verfügbar und
+sollten aus dem Ratgeber raus, welche brauchen eine Alternative, und welche verfügbaren
+Produkte lohnen sich am meisten zu bewerben (nach Besucherzahlen priorisiert). Standardmäßig
+deaktiviert (`products.enabled: false`, der Tab bleibt dann unsichtbar).
+
+**Wichtig — bewusst kein Amazon-Scraping:** Automatisiertes Abfragen der
+Amazon-Produktseiten würde gegen die Partnerprogramm-Betriebsvereinbarung verstoßen und im
+Entdeckungsfall das ganze Partnerkonto gefährden (die frühere offizielle Alternative, die
+PA-API, ist seit 15.05.2026 abgeschaltet). Die Verfügbarkeitsprüfung ist deshalb bewusst
+ein **manueller** Workflow: Button „Verfügbarkeit prüfen" im Dashboard öffnet eine Liste
+aller Produkte einer Tracking-ID mit direktem Amazon-Link zum Selbst-Nachschauen; der
+Status (Vorhanden / Nicht mehr vorhanden / Neueres Produkt vorhanden / Alternative
+vorhanden) wird von Hand eingetragen. Es geht zu keinem Zeitpunkt ein automatischer
+Request vom Server an `amazon.de`.
+
+**Was automatisch läuft:**
+
+- **Produkt-Katalog:** wird bei jedem regulären Sync aus dem/den konfigurierten
+  Google-Sheet-Tab(s) neu gelesen (Name, ASIN, Test-URL, Kategorie, Specs).
+- **„Beworben auf"-Seiten:** ein Crawler liest die Sitemap deiner eigenen Website(s) und
+  merkt sich, welche eigenen Seiten einen Amazon-Link zu welcher ASIN enthalten (z. B.
+  Bestenlisten-Seiten, nicht nur der dedizierte Testartikel) — das ist deine eigene Seite,
+  kein Amazon-Bezug, also kein ToS-Risiko.
+- **Besucherzahlen (GA4):** werden **nicht** automatisch im Sync abgerufen, sondern erst
+  **beim Speichern eines Status-Eintrags** im „Verfügbarkeit prüfen"-Dialog — dann sofort
+  für den Zeitraum der letzten 365 Tage, damit die Zahl im Moment der Entscheidung aktuell
+  ist.
+
+**Voraussetzungen:**
+
+1. Für jede Nische einen **Produkt-Tab im Google Sheet** (wie „Tauchpumpen"): erste Spalte
+   Produktname, weitere Spalten Tracking-ID/ASIN/Test-URL/Amazon-URL/Kategorie (Reihenfolge
+   flexibel, Spaltennamen werden erkannt), danach beliebig viele Spezifikations-Spalten.
+2. Die **gid** dieses Tabs (aus der Browser-URL beim geöffneten Tab: `#gid=<HIER>`).
+3. Optional eine **eigene GA4-Property-ID** je Nische, falls sie auf einer anderen Domain
+   läuft als die unter „SEO-Monitoring" konfigurierte Property (leer lassen, um die
+   SEO-Property mitzunutzen — Voraussetzung ist dann, dass das SEO-Monitoring-GA4-Setup
+   bereits eingerichtet ist, siehe oben).
+4. Die **Website-Basis-URL** der Nische (z. B. `https://tauchpumpe-tests.de`) für den
+   Crawler — er probiert automatisch `/sitemap_index.xml`, `/sitemap.xml` und
+   `/wp-sitemap.xml`.
+
+**Einrichtung:** Unter `/settings` → Abschnitt „Produkt-Lebenszyklus" aktivieren, dann unter
+„Produkt-Tabs" für jede Nische Label/gid/GA4-Property-ID/Website-Basis-URL eintragen.
+
+**Bedienung:** Tracking-ID auswählen → Tabelle zeigt Produkt, Kategorie, Status, Besucher
+(365 Tage) und eine Empfehlung (bei „Nicht mehr vorhanden": „Alternative suchen" bei
+überdurchschnittlichen, „Kann gelöscht werden" bei unterdurchschnittlichen Besucherzahlen).
+Button „Verfügbarkeit prüfen" öffnet den manuellen Check-Dialog inkl. der Seiten, auf denen
+das Produkt laut letztem Crawl beworben wird.
+
 ## Deployment auf Hostinger (Live-Webapp)
 
 Analog zum bestehenden `parqet-dashboard` (https://portfolio.pixxelpassion.de) lässt sich
@@ -255,12 +309,14 @@ Hostinger" oben.
 | `affiliate_dashboard/render.py` | erzeugt `dashboard.html` |
 | `affiliate_dashboard/adapters/` | `gsheet` / `csv` / `s3` (+ `base.py`) |
 | `affiliate_dashboard/seo/` | SEO-Monitoring: `google_auth.py`, `gsc_client.py`, `ga4_client.py`, `seranking_client.py`, `seo_store.py`, `seo_run.py` |
-| `affiliate_dashboard/server.py` | Flask-App fuer den Live-Betrieb (`/`, `/api/sync`, `/settings`, `/api/seo/events`) |
+| `affiliate_dashboard/products/` | Produkt-Lebenszyklus: `catalog_reader.py`, `ga4_traffic.py`, `site_crawler.py`, `store.py`, `products_run.py` |
+| `affiliate_dashboard/gsheet_fetch.py` | Gemeinsame CSV-Fetch-Mechanik (Umsatz-Import + Produkt-Katalog-Tabs) |
+| `affiliate_dashboard/server.py` | Flask-App fuer den Live-Betrieb (`/`, `/api/sync`, `/settings`, `/api/seo/events`, `/api/products`, `/api/products/status`) |
 | `affiliate_dashboard/settings_store.py` | DB-gestützte Einstellungen (`data/settings.db`) statt `config.json` im Server-Betrieb |
 | `affiliate_dashboard/migrate_config_to_db.py` | Einmal-Migration `config.json` → `settings.db` |
 | `Aktualisieren.bat` | Lauf per Doppelklick (lokaler Betrieb) |
 | `Register-WeeklyTask.ps1` | Windows-Aufgabenplanung (lokaler Betrieb) |
-| `data/` | Rohdaten-Snapshots, SQLite-DBs (`affiliate.db`/`seo.db`/`settings.db`), Google-Token (gitignored) |
+| `data/` | Rohdaten-Snapshots, SQLite-DBs (`affiliate.db`/`seo.db`/`products.db`/`settings.db`), Google-Token (gitignored) |
 
 ## Bekannte Grenzen (Stand Juli 2026)
 
@@ -272,7 +328,10 @@ Hostinger" oben.
 - **Manuelle Pflege:** Sheet bzw. CSV müssen aktuell gehalten werden.
 - **S3-Zugang abgelehnt:** Amazon hat den Antrag auf den Activity-Report-Feed abgelehnt;
   das Google Sheet ist die dauerhafte Quelle.
-- **Kein Scraping:** Nur offizielle Wege (veröffentlichtes Sheet, Bericht-Export).
+- **Kein Amazon-Scraping:** Nur offizielle Wege (veröffentlichtes Sheet, Bericht-Export);
+  die Amazon-Verfügbarkeitsprüfung im Produkt-Lebenszyklus-Tab ist bewusst manuell (siehe
+  dort). Der Site-Crawler für „beworben auf"-Seiten liest ausschließlich die **eigene**
+  Website (Sitemap + eigene Seiten), niemals Amazon.
 - **SEO-Monitoring, GA4 „Ø Engagement-Zeit":** GA4 kennt keine 1:1-Entsprechung zur alten
   "Time on Page" mehr; die Kennzahl ist eine Näherung (`userEngagementDuration /
   screenPageViews`), keine exakte Verweildauer je Seitenaufruf.
