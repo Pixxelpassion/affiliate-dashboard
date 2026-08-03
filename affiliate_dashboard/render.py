@@ -421,9 +421,6 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
   </div>
   <div id="view-products" class="panel hidden">
     <div class="controls" style="margin-top:0;">
-      <label class="ctl">Tracking-ID:
-        <select id="productsTidSelect"></select>
-      </label>
       <span class="count" id="productsCount"></span>
       <button type="button" id="productsCheckBtn" class="btn-primary">Verfügbarkeit prüfen</button>
     </div>
@@ -861,8 +858,9 @@ async function renderSeo(){
 // "beworben auf") werden LIVE per Fetch geladen -- sonst wuerden manuell
 // gespeicherte Status-Aenderungen nach einem Seiten-Reload erst nach dem
 // naechsten Sync wieder sichtbar (analog zu den SEO-Events).
-let productsTid = null;
 let productsItems = [];
+function productsTidParam(){ return isSingle() ? selectedTid : ''; }
+function productsTidLabel(){ return isSingle() ? selectedTid : 'Alle Tracking-IDs'; }
 const STATUS_LABELS = {available:'Vorhanden', unavailable:'Nicht mehr vorhanden',
   newer_available:'Neueres Produkt vorhanden', alternative_available:'Alternative vorhanden'};
 const STATUS_CLASSES = {available:'status-available', unavailable:'status-unavailable',
@@ -887,12 +885,6 @@ async function loadProductsItems(tid){
     return data.items || [];
   } catch(e){ return []; }
 }
-function renderProductsControls(){
-  document.getElementById('productsTidSelect').innerHTML = PRODUCTS.tracking_ids.map(t =>
-    '<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
-  if(!productsTid) productsTid = PRODUCTS.tracking_ids[0];
-  document.getElementById('productsTidSelect').value = productsTid;
-}
 function renderProductsTable(){
   const items = productsItems.slice().sort((a,b)=>(b.pageviews||0)-(a.pageviews||0));
   const med = medianOf(items.map(it=>it.pageviews||0));
@@ -913,13 +905,7 @@ function renderProductsTable(){
 }
 async function renderProducts(){
   if(!PRODUCTS || !PRODUCTS.tracking_ids || !PRODUCTS.tracking_ids.length) return;
-  renderProductsControls();
-  productsItems = await loadProductsItems(productsTid);
-  renderProductsTable();
-}
-async function switchProductsTid(tid){
-  productsTid = tid;
-  productsItems = await loadProductsItems(productsTid);
+  productsItems = await loadProductsItems(productsTidParam());
   renderProductsTable();
 }
 async function saveProductStatus(tracking_id, asin, status, note, rowEl){
@@ -945,7 +931,7 @@ async function saveProductStatus(tracking_id, asin, status, note, rowEl){
   }
 }
 function openProductsOverlay(){
-  document.getElementById('productsOverlayTid').textContent = productsTid;
+  document.getElementById('productsOverlayTid').textContent = productsTidLabel();
   const items = productsItems;
   const statusOptions = ['', 'available', 'unavailable', 'newer_available', 'alternative_available'];
   document.getElementById('productsOverlayList').innerHTML = items.map(it => {
@@ -991,6 +977,7 @@ function init(){
     renderCards();
     renderPivot();
     renderTrend();
+    if(view === 'products') renderProducts();
   });
 
   // Metric-Auswahl
@@ -1042,10 +1029,6 @@ function init(){
   // Produkte (nur sichtbar, wenn Daten vorhanden)
   if(PRODUCTS && PRODUCTS.tracking_ids && PRODUCTS.tracking_ids.length){
     document.getElementById('productsTabBtn').classList.remove('hidden');
-
-    document.getElementById('productsTidSelect').addEventListener('change', e => {
-      switchProductsTid(e.target.value);
-    });
     document.getElementById('productsCheckBtn').addEventListener('click', openProductsOverlay);
     document.getElementById('productsOverlayClose').addEventListener('click', closeProductsOverlay);
   }
