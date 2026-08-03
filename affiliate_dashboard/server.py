@@ -30,6 +30,7 @@ from .settings_store import SettingsStore
 from .products import ga4_traffic
 from .products.products_run import merge_items
 from .products.store import ProductStore
+from .seo import research_agent
 
 try:
     import fcntl  # nur auf Linux/Unix verfuegbar (Produktivserver)
@@ -40,23 +41,27 @@ app = Flask(__name__)
 
 _SETTINGS_DB = BASE_DIR / "data" / "settings.db"
 _SYNC_LOCK_PATH = BASE_DIR / "data" / "sync.lock"
+_RESEARCH_LOCK_PATH = BASE_DIR / "data" / "research.lock"
 
 # gunicorn laeuft mit mehreren Worker-PROZESSEN (-w 4) -- ein einfaches
 # threading.Lock() waere je Prozess getrennt und wuerde NICHT verhindern, dass
 # mehrere Worker gleichzeitig synchronisieren. Auf Linux nutzen wir daher einen
 # echten Datei-Lock (fcntl.flock) auf eine gemeinsame Datei im data/-Volume, das
 # von allen Workern geteilt wird. Lokal (Windows, ein einzelner Flask-Prozess)
-# reicht ein simples threading.Lock().
+# reicht ein simples threading.Lock(). Sync und Rechercheagent bekommen getrennte
+# Locks (getrennte Datei + getrenntes lokales Lock-Objekt), damit ein laufender
+# Sync einen Recherche-Trigger nicht blockiert und umgekehrt.
 _local_sync_lock = threading.Lock()
+_local_research_lock = threading.Lock()
 
 
-def _try_acquire_sync_lock():
-    """Liefert ein offenes File-Handle (muss bis Sync-Ende offen bleiben) oder
-    ``None``, wenn bereits ein anderer Worker synchronisiert."""
+def _try_acquire_lock(lock_path: Path, local_lock: threading.Lock):
+    """Liefert ein offenes File-Handle (muss bis Arbeitsende offen bleiben) oder
+    ``None``, wenn bereits ein anderer Worker denselben Job ausfuehrt."""
     if fcntl is None:
-        return object() if _local_sync_lock.acquire(blocking=False) else None
-    _SYNC_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(_SYNC_LOCK_PATH, "w")
+        return object() if local_lock.acquire(blocking=False) else None
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "w")
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return fh
@@ -65,11 +70,11 @@ def _try_acquire_sync_lock():
         return None
 
 
-def _release_sync_lock(handle) -> None:
+def _release_lock(handle, local_lock: threading.Lock) -> None:
     if handle is None:
         return
     if fcntl is None:
-        _local_sync_lock.release()
+        local_lock.release()
         return
     try:
         fcntl.flock(handle, fcntl.LOCK_UN)
@@ -78,20 +83,44 @@ def _release_sync_lock(handle) -> None:
     handle.close()
 
 
-def _is_sync_running() -> bool:
+def _is_locked(lock_path: Path, local_lock: threading.Lock) -> bool:
     if fcntl is None:
-        return _local_sync_lock.locked()
-    if not _SYNC_LOCK_PATH.exists():
+        return local_lock.locked()
+    if not lock_path.exists():
         return False
-    fh = open(_SYNC_LOCK_PATH, "w")
+    fh = open(lock_path, "w")
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fcntl.flock(fh, fcntl.LOCK_UN)
-        return False  # Lock war frei -> niemand synchronisiert gerade
+        return False  # Lock war frei -> niemand arbeitet gerade
     except OSError:
         return True
     finally:
         fh.close()
+
+
+def _try_acquire_sync_lock():
+    return _try_acquire_lock(_SYNC_LOCK_PATH, _local_sync_lock)
+
+
+def _release_sync_lock(handle) -> None:
+    _release_lock(handle, _local_sync_lock)
+
+
+def _is_sync_running() -> bool:
+    return _is_locked(_SYNC_LOCK_PATH, _local_sync_lock)
+
+
+def _try_acquire_research_lock():
+    return _try_acquire_lock(_RESEARCH_LOCK_PATH, _local_research_lock)
+
+
+def _release_research_lock(handle) -> None:
+    _release_lock(handle, _local_research_lock)
+
+
+def _is_research_running() -> bool:
+    return _is_locked(_RESEARCH_LOCK_PATH, _local_research_lock)
 
 
 def _store() -> SettingsStore:
@@ -180,6 +209,47 @@ def api_status():
         "last_sync": last_sync,
         "seo_enabled": bool(cfg.get("seo", {}).get("enabled")),
     })
+
+
+# --- SEO-Rechercheagent -----------------------------------------------------------
+
+@app.route("/api/seo/research", methods=["POST"])
+def api_seo_research():
+    lock_handle = _try_acquire_research_lock()
+    if lock_handle is None:
+        return jsonify({"status": "already_running"}), 409
+
+    def _worker():
+        try:
+            with _store() as store:
+                cfg = Config.from_settings_store(store)
+                report_path = research_agent.run(cfg, store)
+            result = {"status": "ok", "report_file": report_path.name}
+        except Exception as exc:  # noqa: BLE001
+            result = {"status": "error", "message": str(exc)}
+        finally:
+            with _store() as store:
+                store.set_meta("last_research_result", json.dumps(result))
+            _release_research_lock(lock_handle)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return jsonify({"status": "started"}), 202
+
+
+@app.route("/api/seo/research-form", methods=["POST"])
+def api_seo_research_form():
+    """Formular-freundlicher Trigger (redirectet zurueck statt JSON zu liefern),
+    analog zu /api/sync-form."""
+    api_seo_research()
+    return redirect("/settings?saved=1")
+
+
+@app.route("/data/reports/<path:filename>")
+def download_report(filename: str):
+    report_dir = _cfg().get("seo", {}).get("research", {}).get("report_dir", "data/reports")
+    report_dir = Path(report_dir)
+    report_dir = report_dir if report_dir.is_absolute() else (BASE_DIR / report_dir)
+    return send_from_directory(report_dir, filename)
 
 
 # --- SEO-Events-API (ersetzt die fruehere localStorage-Loesung) ------------------
@@ -341,6 +411,25 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
   <button type="submit">Speichern</button>
 </form>
 
+<form method="post" action="/settings">
+  <h2>SEO-Rechercheagent</h2>
+  <input type="hidden" name="research_form" value="1">
+  <label><input type="checkbox" name="seranking_auto_discover_pages" {{ 'checked' if s.get('seranking_auto_discover_pages')=='true' else '' }}> Seiten/Keywords automatisch aus SE-Ranking-Projekt übernehmen</label>
+  <label>Gemini API-Key <input type="password" name="gemini_api_key" value="{{ s.get('gemini_api_key','') }}"></label>
+  <button type="submit">Speichern</button>
+</form>
+
+<form method="post" action="/api/seo/research-form">
+  <button type="submit">Recherche jetzt starten</button>
+  {% if last_research %}
+    {% if last_research.status == 'ok' %}
+      <span> Letzter Bericht: <a href="/data/reports/{{ last_research.report_file }}" target="_blank">{{ last_research.report_file }}</a></span>
+    {% elif last_research.status == 'error' %}
+      <span style="color:#b82105"> Letzter Lauf fehlgeschlagen: {{ last_research.message }}</span>
+    {% endif %}
+  {% endif %}
+</form>
+
 <h2>SEO-Watchlist (Seiten + Keywords)</h2>
 <table>
   <tr><th>URL</th><th>Keywords</th><th></th></tr>
@@ -407,7 +496,10 @@ def settings_page():
         s = store.all_settings()
         pages = store.list_pages()
         product_tabs = store.list_product_tabs()
+        raw_research = store.get_meta("last_research_result")
+    last_research = json.loads(raw_research) if raw_research else None
     return render_template_string(_SETTINGS_TEMPLATE, s=s, pages=pages, product_tabs=product_tabs,
+                                   last_research=last_research,
                                    saved=request.args.get("saved"),
                                    favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri())
 
@@ -420,6 +512,7 @@ def settings_save():
     ueberschreibt (siehe Bug: SE-Ranking-Update loeschte die Sheet-ID)."""
     form = request.form
     is_seo_form = "seo_form" in form
+    is_research_form = "research_form" in form
     is_products_form = "products_form" in form
 
     with _store() as store:
@@ -429,6 +522,10 @@ def settings_save():
             store.set_setting("ga4_property_id", form.get("ga4_property_id", "").strip())
             store.set_setting("seranking_api_key", form.get("seranking_api_key", "").strip())
             store.set_setting("seranking_project_id", form.get("seranking_project_id", "").strip())
+        elif is_research_form:
+            store.set_setting("seranking_auto_discover_pages",
+                               "true" if form.get("seranking_auto_discover_pages") else "false")
+            store.set_setting("gemini_api_key", form.get("gemini_api_key", "").strip())
         elif is_products_form:
             store.set_setting("products_enabled", "true" if form.get("products_enabled") else "false")
         else:

@@ -41,7 +41,19 @@ DEFAULTS = {
         },
         "gsc": {"property": ""},
         "ga4": {"property_id": ""},
-        "seranking": {"api_key": "", "project_id": ""},
+        "seranking": {"api_key": "", "project_id": "", "auto_discover_pages": False},
+        "gemini": {"api_key": ""},
+        "research": {
+            "cache_days": 30,
+            "report_dir": "data/reports",
+            "cannibalization": {
+                "min_impressions": 50,
+                "min_page_impressions": 3,
+                "min_pages": 2,
+                "close_position_gap": 30.0,
+                "window_days": 90,
+            },
+        },
         "pages": [],
     },
     "products": {

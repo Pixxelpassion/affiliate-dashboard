@@ -33,6 +33,34 @@ def _keyword_lookup(api_key: str, site_id: str) -> dict[str, dict]:
     return {kw["id"]: {"name": kw.get("name", ""), "link": kw.get("link", "")} for kw in data}
 
 
+def discover_pages(api_key: str, site_id: str) -> dict:
+    """Gruppiert alle Projekt-Keywords nach der in SE Ranking hinterlegten Ziel-URL.
+
+    Nicht jedes Keyword hat eine Ziel-URL (``link``) -- diese landen unter
+    ``unassigned`` statt verworfen zu werden, sie sind fuer die Keyword-Research-/
+    Clustering-Stufe ein Befund (Content-Luecke), kein Fehler.
+
+    Gibt ``{"pages": [{"url": link, "keywords": [name, ...]}], "unassigned": [name, ...]}``
+    zurueck.
+    """
+    lookup = _keyword_lookup(api_key, site_id)
+    by_link: dict[str, set[str]] = {}
+    unassigned: set[str] = set()
+    for meta in lookup.values():
+        name = meta.get("name", "").strip()
+        if not name:
+            continue
+        link = (meta.get("link") or "").strip()
+        if link:
+            by_link.setdefault(link, set()).add(name)
+        else:
+            unassigned.add(name)
+    return {
+        "pages": [{"url": url, "keywords": sorted(kws)} for url, kws in sorted(by_link.items())],
+        "unassigned": sorted(unassigned),
+    }
+
+
 def fetch_daily(api_key: str, site_id: str, page_path: str, keywords: list[str],
                  start_date: str, end_date: str) -> list[dict]:
     """Taegliche Rankingposition je konfiguriertem Keyword fuer eine Seite.

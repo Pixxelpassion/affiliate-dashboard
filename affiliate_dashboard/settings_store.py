@@ -58,9 +58,11 @@ _SETTING_PATHS = {
     "ga4_property_id": ("seo", "ga4", "property_id"),
     "seranking_api_key": ("seo", "seranking", "api_key"),
     "seranking_project_id": ("seo", "seranking", "project_id"),
+    "seranking_auto_discover_pages": ("seo", "seranking", "auto_discover_pages"),
+    "gemini_api_key": ("seo", "gemini", "api_key"),
     "products_enabled": ("products", "enabled"),
 }
-_BOOL_KEYS = {"seo_enabled", "products_enabled"}
+_BOOL_KEYS = {"seo_enabled", "products_enabled", "seranking_auto_discover_pages"}
 
 
 class SettingsStore:
@@ -110,6 +112,13 @@ class SettingsStore:
 
     def delete_page(self, page_id: int) -> None:
         self.conn.execute("DELETE FROM seo_pages WHERE id = ?", (page_id,))
+        self.conn.commit()
+
+    def update_page_keywords(self, page_id: int, keywords: list[str]) -> None:
+        self.conn.execute(
+            "UPDATE seo_pages SET keywords = ? WHERE id = ?",
+            (json.dumps(list(keywords)), page_id),
+        )
         self.conn.commit()
 
     # --- Produkt-Tabs (Produkt-Lebenszyklus-Tab) -------------------------------

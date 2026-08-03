@@ -21,3 +21,11 @@ gunicorn>=22.0                   # WSGI-Server fuer den Produktivbetrieb (nicht 
 # der Site-Crawler nutzt nur die Standardbibliothek (urllib, xml.etree.ElementTree,
 # re), die GA4-Abfrage nutzt dieselben google-* Pakete wie oben (setzt ein
 # eingerichtetes SEO-Monitoring-Google-Login voraus, siehe README).
+
+# Nur fuer den SEO-Rechercheagent (affiliate_dashboard/seo/research_agent.py):
+# einziger Baustein, der ein LLM aufruft -- alle anderen Quellen (GSC/GA4/SE Ranking)
+# nutzen nur die Standardbibliothek (urllib). SE-Ranking-Data-API-Aufrufe (Keyword-
+# Research) laufen ueber dieselbe urllib-Anbindung wie die Project-API, brauchen
+# kein eigenes Paket. Nutzt Gemini statt Claude, um mit nur einem Zugangsdaten-
+# Anbieter (Google) auszukommen -- GSC/GA4 laufen bereits ueber Google-OAuth.
+google-genai>=1.0                # Ein Completion-Call je Analyse-Lauf, kein Tool-Use

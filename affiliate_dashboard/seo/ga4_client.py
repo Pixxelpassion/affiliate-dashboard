@@ -23,6 +23,23 @@ def build_client(credentials) -> BetaAnalyticsDataClient:
     return BetaAnalyticsDataClient(credentials=credentials)
 
 
+def _normalize_property_id(property_id: str) -> str:
+    """Erlaubt sowohl die blanke numerische ID (aus /settings, z.B. '386535911') als
+    auch die volle Form ('properties/386535911') -- die GA4-API verlangt zwingend
+    Letzteres."""
+    property_id = property_id.strip()
+    return property_id if property_id.startswith("properties/") else f"properties/{property_id}"
+
+
+def _normalize_page_path(page_path: str) -> str:
+    """GA4s ``pagePath``-Dimension traegt immer einen fuehrenden Slash (Startseite:
+    '/', nicht ''). ``seo_pages.url`` ist dagegen Property-relativ OHNE fuehrenden
+    Slash gespeichert (Konvention aus ``gsc_client.py``, das die volle URL selbst
+    zusammenbaut) -- ohne diese Normalisierung liefert GA4 fuer jede so konfigurierte
+    Seite still 0 Zeilen statt eines Fehlers."""
+    return "/" + page_path.lstrip("/")
+
+
 def fetch_daily(client: BetaAnalyticsDataClient, property_id: str, page_path: str,
                  start_date: str, end_date: str) -> list[dict]:
     """Taegliche Zeitreihe (Seitenviews + Ø Engagement-Zeit) fuer eine Seite.
@@ -30,7 +47,7 @@ def fetch_daily(client: BetaAnalyticsDataClient, property_id: str, page_path: st
     Gibt eine flache Liste zurueck: {date, page, pageviews, avg_engagement_seconds}.
     """
     request = RunReportRequest(
-        property=property_id,
+        property=_normalize_property_id(property_id),
         dimensions=[Dimension(name="date"), Dimension(name="pagePath")],
         metrics=[Metric(name="screenPageViews"), Metric(name="userEngagementDuration")],
         date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
@@ -38,7 +55,8 @@ def fetch_daily(client: BetaAnalyticsDataClient, property_id: str, page_path: st
             filter=Filter(
                 field_name="pagePath",
                 string_filter=Filter.StringFilter(
-                    value=page_path, match_type=Filter.StringFilter.MatchType.EXACT
+                    value=_normalize_page_path(page_path),
+                    match_type=Filter.StringFilter.MatchType.EXACT,
                 ),
             )
         ),

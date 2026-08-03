@@ -211,6 +211,42 @@ Request vom Server an `amazon.de`.
 Button „Verfügbarkeit prüfen" öffnet den manuellen Check-Dialog inkl. der Seiten, auf denen
 das Produkt laut letztem Crawl beworben wird.
 
+## SEO-Rechercheagent einrichten (optional)
+
+Baut auf dem SEO-Monitoring (s. o.) auf: verdichtet Ranking-/Klick-/Traffic-Historie,
+erkennt Keyword-Kannibalisierung (mehrere eigene Seiten ranken für dieselbe Suchanfrage)
+und schlägt anhand von SE-Ranking-Keyword-Research (verwandte/ähnliche Keywords,
+Suchvolumen) neue Content-Cluster vor — ein einziger Gemini-Call fasst das zu einem
+Markdown-Bericht mit konkreten Maßnahmen zusammen. Ersetzt den bisherigen manuellen
+Workflow (Screenshots aus SE Ranking/GSC/GA4 in ein Chat-Tool laden).
+
+**Voraussetzungen (zusätzlich zum bereits eingerichteten SEO-Monitoring):**
+
+1. **SE-Ranking Data API:** im SE-Ranking-Account unter *API* prüfen, dass neben der
+   *Project API* auch die *Data API* aktiv ist (kein Zusatz-Abo nötig, aber nicht bei
+   jedem Tarif automatisch aktiv) — liefert die Keyword-Research-Daten.
+2. **Gemini-API-Key:** [aistudio.google.com/apikey](https://aistudio.google.com/apikey) →
+   mit Google-Account einloggen → „Create API key" → in `/settings` unter
+   „SEO-Rechercheagent" eintragen. Bewusst Gemini statt Claude/OpenAI, damit der gesamte
+   Rechercheagent mit nur einem Zugangsdaten-Anbieter (Google) auskommt — GSC/GA4 laufen
+   ohnehin schon über Google-OAuth.
+3. **Seiten/Keywords:** entweder manuell in der SEO-Watchlist pflegen (s. o.), oder
+   „Seiten/Keywords automatisch aus SE-Ranking-Projekt übernehmen" aktivieren — dann werden
+   bei jedem Recherche-Lauf die in SE Ranking hinterlegten Keyword-Ziel-URLs additiv (nie
+   löschend) in die Watchlist übernommen. Keywords ohne hinterlegte Ziel-URL werden nicht
+   verworfen, sondern im Bericht als „ungenutzte Keyword-Chance" behandelt.
+
+**Auslösen:** Button „Recherche jetzt starten" unter `/settings`, oder
+`POST /api/seo/research` (läuft im Hintergrund-Thread, `GET /settings` zeigt danach den
+Link zum erzeugten Bericht). Lokal/CLI: `python -m affiliate_dashboard.seo.research_agent`.
+Bewusst kein automatischer Cron-Trigger — das ist ein gezielt angestoßener Analyse-Lauf,
+kein laufender Sync.
+
+**Kosten-Hinweis:** jeder Lauf verbraucht SE-Ranking-Data-API-Credits (gecacht, 30 Tage
+Standard-Gültigkeit — ein wiederholter Lauf für dieselben Keywords kostet keine weiteren
+Credits) sowie einen Gemini-API-Call (nutzungsbasiert, pro Lauf im niedrigen Cent- bis
+niedrigen Euro-Bereich).
+
 ## Deployment auf Hostinger (Live-Webapp)
 
 Analog zum bestehenden `parqet-dashboard` (https://portfolio.pixxelpassion.de) lässt sich
@@ -291,6 +327,7 @@ pip install -r requirements.txt
 - `boto3` — nur für den späteren S3-Adapter.
 - `google-auth`, `google-auth-oauthlib`, `google-api-python-client`, `google-analytics-data`
   — nur für das SEO-Monitoring (`seo.enabled: true`).
+- `google-genai` — nur für den SEO-Rechercheagent (ein Gemini-Call je Analyse-Lauf).
 
 ## Später
 
@@ -309,9 +346,10 @@ Hostinger" oben.
 | `affiliate_dashboard/render.py` | erzeugt `dashboard.html` |
 | `affiliate_dashboard/adapters/` | `gsheet` / `csv` / `s3` (+ `base.py`) |
 | `affiliate_dashboard/seo/` | SEO-Monitoring: `google_auth.py`, `gsc_client.py`, `ga4_client.py`, `seranking_client.py`, `seo_store.py`, `seo_run.py` |
+| `affiliate_dashboard/seo/` (Rechercheagent) | `seranking_pages_sync.py` (Seiten-Discovery), `cannibalization.py`, `seranking_keyword_research.py`, `research_agent.py` |
 | `affiliate_dashboard/products/` | Produkt-Lebenszyklus: `catalog_reader.py`, `ga4_traffic.py`, `site_crawler.py`, `store.py`, `products_run.py` |
 | `affiliate_dashboard/gsheet_fetch.py` | Gemeinsame CSV-Fetch-Mechanik (Umsatz-Import + Produkt-Katalog-Tabs) |
-| `affiliate_dashboard/server.py` | Flask-App fuer den Live-Betrieb (`/`, `/api/sync`, `/settings`, `/api/seo/events`, `/api/products`, `/api/products/status`) |
+| `affiliate_dashboard/server.py` | Flask-App fuer den Live-Betrieb (`/`, `/api/sync`, `/settings`, `/api/seo/events`, `/api/seo/research`, `/api/products`, `/api/products/status`) |
 | `affiliate_dashboard/settings_store.py` | DB-gestützte Einstellungen (`data/settings.db`) statt `config.json` im Server-Betrieb |
 | `affiliate_dashboard/migrate_config_to_db.py` | Einmal-Migration `config.json` → `settings.db` |
 | `Aktualisieren.bat` | Lauf per Doppelklick (lokaler Betrieb) |
