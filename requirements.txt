@@ -2,7 +2,7 @@
 # Python-Standardbibliothek (urllib, csv, sqlite3, json) -- KEINE Installation noetig.
 #
 # Die folgenden Pakete sind nur fuer optionale Funktionen erforderlich:
-openpyxl>=3.1    # nur fuer .xlsx-Import im csv_adapter (data/inbox)
+openpyxl>=3.1    # .xlsx-Import im csv_adapter (data/inbox) + Produkt-Katalog-Tabs lesen (Hyperlinks)
 boto3>=1.34      # nur fuer den spaeteren S3-Data-Feed-Adapter
 
 # Nur fuer das SEO-Monitoring (seo.enabled=true):
@@ -15,7 +15,9 @@ google-analytics-data>=0.18      # GA4 Data API (runReport)
 flask>=3.0                       # Web-Framework fuer server.py
 gunicorn>=22.0                   # WSGI-Server fuer den Produktivbetrieb (nicht lokal noetig)
 
-# Produkt-Lebenszyklus-Tab (products.enabled=true): keine zusaetzlichen Pakete --
+# Produkt-Lebenszyklus-Tab (products.enabled=true): keine neuen Pakete --
+# der Katalog-Reader nutzt openpyxl (s.o., XLSX-Export statt CSV, damit
+# Zell-Hyperlinks auf dem Produktnamen als Test-URL-Fallback erhalten bleiben),
 # der Site-Crawler nutzt nur die Standardbibliothek (urllib, xml.etree.ElementTree,
 # re), die GA4-Abfrage nutzt dieselben google-* Pakete wie oben (setzt ein
 # eingerichtetes SEO-Monitoring-Google-Login voraus, siehe README).

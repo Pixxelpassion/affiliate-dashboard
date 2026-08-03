@@ -14,21 +14,35 @@ Die Tracking-ID wird NICHT aus einer Spalte gelesen (nicht jeder Tab hat eine
 konfigurierten Tab-Label (``/settings`` -> Produkt-Tabs). Wer diese Zuordnung
 nutzt, muss das Tab-Label exakt auf die echte Tracking-ID setzen (z. B.
 "tauchpumpe05-21").
+
+Gelesen wird als **XLSX**, nicht CSV: manche Tabs (z. B. Tischkreissaegen)
+haben keine eigene "Test"-Spalte, sondern verlinken den Testartikel direkt auf
+der Produktname-Zelle als Hyperlink -- ein CSV-Export wuerde diesen Link
+verlieren (CSV kennt nur sichtbaren Text), der XLSX-Export traegt ihn. Die
+"Test"-Spalte hat weiterhin Vorrang, falls vorhanden und befuellt; der
+Hyperlink auf der Namenszelle ist nur der Fallback.
 """
 
 from __future__ import annotations
 
-import csv
 import io
 
+import openpyxl
+
 from .. import columns
-from ..gsheet_fetch import fetch_csv
+from ..gsheet_fetch import fetch_xlsx
 
 
-def _cell(row: list, idx: int | None) -> str:
-    if idx is None or idx >= len(row):
+def _cell_str(value) -> str:
+    if value is None:
         return ""
-    return (row[idx] or "").strip()
+    return str(value).strip()
+
+
+def _get(values: list[str], idx: int | None) -> str:
+    if idx is None or idx >= len(values):
+        return ""
+    return values[idx]
 
 
 def read_tab(sheet_id: str, gid: str, tab_label: str) -> tuple[list[dict], dict]:
@@ -40,12 +54,16 @@ def read_tab(sheet_id: str, gid: str, tab_label: str) -> tuple[list[dict], dict]
     weder eine Amazon-Verfuegbarkeitspruefung noch eine
     Besucherzahlen-Zuordnung moeglich.
     """
-    text = fetch_csv(sheet_id, gid)
-    reader = csv.reader(io.StringIO(text))
+    data = fetch_xlsx(sheet_id, gid)
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+
+    rows_iter = ws.iter_rows(min_row=1)
     try:
-        headers = next(reader)
+        header_cells = next(rows_iter)
     except StopIteration:
         return [], {"rows": 0, "no_asin": 0}
+    headers = [_cell_str(c.value) for c in header_cells]
 
     cols = columns.resolve_columns(headers, aliases=columns.PRODUCT_ALIASES)
     category_idx = cols.get("category")
@@ -54,12 +72,13 @@ def read_tab(sheet_id: str, gid: str, tab_label: str) -> tuple[list[dict], dict]
     items: list[dict] = []
     stats = {"rows": 0, "no_asin": 0}
 
-    for row in reader:
-        if not row or not any((cell or "").strip() for cell in row):
+    for row_cells in rows_iter:
+        values = [_cell_str(c.value) for c in row_cells]
+        if not any(values):
             continue  # komplett leere Zeile
 
-        name = _cell(row, 0)
-        asin = _cell(row, cols.get("asin"))
+        name = _get(values, 0)
+        asin = _get(values, cols.get("asin"))
         if not name and not asin:
             continue  # keine sinnvolle Produktzeile
 
@@ -68,12 +87,16 @@ def read_tab(sheet_id: str, gid: str, tab_label: str) -> tuple[list[dict], dict]
             stats["no_asin"] += 1
             continue
 
+        test_url = _get(values, cols.get("test_url"))
+        if not test_url and row_cells and row_cells[0].hyperlink:
+            test_url = row_cells[0].hyperlink.target or ""
+
         specs: dict[str, str] = {}
         for idx in range(specs_start, len(headers)):
-            header = (headers[idx] or "").strip()
+            header = headers[idx]
             if not header:
                 continue
-            value = _cell(row, idx)
+            value = _get(values, idx)
             if value:
                 specs[header] = value
 
@@ -82,9 +105,9 @@ def read_tab(sheet_id: str, gid: str, tab_label: str) -> tuple[list[dict], dict]
             "name": name,
             "tracking_id": tab_label,
             "asin": asin,
-            "category": _cell(row, cols.get("category")),
-            "test_url": _cell(row, cols.get("test_url")),
-            "amazon_url": _cell(row, cols.get("amazon_url")),
+            "category": _get(values, cols.get("category")),
+            "test_url": test_url,
+            "amazon_url": _get(values, cols.get("amazon_url")),
             "specs": specs,
         })
 
