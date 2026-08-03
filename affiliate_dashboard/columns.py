@@ -76,8 +76,10 @@ NUMERIC_FIELDS = (
 # Alias-Set fuer die Produkt-Katalog-Tabs (Tauchpumpen, Motorsensen, ...) --
 # separates Schema von den Umsatz-ALIASES oben, genutzt von
 # products/catalog_reader.py ueber resolve_columns(headers, aliases=PRODUCT_ALIASES).
+# Kein "tracking_id"-Eintrag: die Tracking-ID kommt aus dem Tab-Label
+# (/settings), nicht aus einer Spalte -- nicht jeder Produkt-Tab hat ueberhaupt
+# eine "Tracking ID"-Spalte (z. B. der Tischkreissaegen-Tab).
 PRODUCT_ALIASES: dict[str, set[str]] = {
-    "tracking_id": {"trackingid", "trackingids"},
     "asin": {"asin", "itemasin"},
     "test_url": {"test", "testurl", "testartikel", "review", "artikel"},
     "amazon_url": {"amazon", "amazonurl", "amazonlink", "link"},
