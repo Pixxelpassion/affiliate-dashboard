@@ -23,6 +23,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_from_directory
 from werkzeug.security import check_password_hash
 
+from . import branding
 from .config import BASE_DIR, Config
 from .run import run_once
 from .settings_store import SettingsStore
@@ -247,7 +248,7 @@ def api_products_status():
 
     cfg = _cfg()
     with ProductStore(_products_db_path(cfg)) as store:
-        checked_at = store.upsert_status(tracking_id, asin, status, note)
+        checked_at = store.add_status_check(tracking_id, asin, status, note)
 
         catalog_row = next(
             (c for c in store.all_catalog() if c["tracking_id"] == tracking_id and c["asin"] == asin),
@@ -274,19 +275,50 @@ def api_products_status():
 
 _SETTINGS_TEMPLATE = """
 <!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Einstellungen – Affiliate-Dashboard</title>
+{{ favicon|safe }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-body{font-family:'Segoe UI',system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#1a202c}
-h1{font-size:1.4rem} h2{font-size:1.1rem;margin-top:2rem;border-bottom:1px solid #e6e8e1;padding-bottom:.3rem}
-label{display:block;margin-top:.9rem;font-size:.85rem;color:#4b5563}
-input[type=text],input[type=password]{width:100%;padding:.5rem .65rem;border:1px solid #d1d5db;border-radius:6px;font-size:.95rem;margin-top:.25rem}
-button{margin-top:1.2rem;padding:.55rem 1.1rem;border-radius:6px;border:1px solid #717e21;background:#b7cb3a;font-weight:600;cursor:pointer}
+:root{--pp-green:#b7cb3a;--pp-green-dark:#717e21;--pp-ink:#1A202C;--pp-muted:#6b7280;--pp-bg:#fbfbfb;--pp-card:#ffffff;--pp-border:#e6e8e1;--body-font:'Poppins','Segoe UI',system-ui,sans-serif;--head-font:'Montserrat','Poppins','Segoe UI',sans-serif}
+*{box-sizing:border-box}
+body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--pp-ink);-webkit-font-smoothing:antialiased}
+.topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,#09adbe 100%)}
+header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
+header img.logo{height:46px;width:auto}
+header .titles{line-height:1.15}
+header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
+header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
+header .spacer{flex:1}
+header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
+header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+main{padding:1.4rem 2rem 3rem;max-width:760px;margin:0 auto}
+h2{font-family:var(--head-font);font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--pp-border);padding-bottom:.3rem}
+label{display:block;margin-top:.9rem;font-size:.85rem;color:var(--pp-muted)}
+input[type=text],input[type=password]{width:100%;padding:.5rem .65rem;border:1px solid var(--pp-border);border-radius:5px;font-size:.95rem;margin-top:.25rem;font-family:var(--body-font);color:var(--pp-ink)}
+input:focus{outline:2px solid color-mix(in srgb,var(--pp-green) 55%,transparent);border-color:var(--pp-green)}
+button{font-family:var(--body-font);margin-top:1.2rem;padding:.5rem 1.1rem;border-radius:5px;border:none;background:var(--pp-green);color:#fff;font-weight:500;font-size:.9rem;cursor:pointer}
+button:hover{background:var(--pp-green-dark)}
 table{width:100%;border-collapse:collapse;margin-top:.6rem;font-size:.88rem}
-td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid #e6e8e1}
-.small-btn{padding:.3rem .6rem;font-size:.8rem;background:#fff;border:1px solid #d1d5db}
-.flash{background:#eef7e1;border:1px solid #b7cb3a;padding:.6rem 1rem;border-radius:6px;margin-bottom:1rem}
+td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--pp-border)}
+th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
+.small-btn{margin-top:0;padding:.3rem .6rem;font-size:.8rem;background:var(--pp-card);color:var(--pp-ink);border:1px solid var(--pp-border)}
+.small-btn:hover{background:var(--pp-card);border-color:var(--pp-neg,#b82105);color:#b82105}
+.flash{background:color-mix(in srgb,var(--pp-green) 18%,var(--pp-card));border:1px solid var(--pp-green);padding:.6rem 1rem;border-radius:5px;margin-bottom:1rem}
 </style></head><body>
-<h1>Einstellungen</h1>
+<div class="topbar"></div>
+<header>
+  <img class="logo" src="{{ logo }}" alt="Pixxelpassion">
+  <div class="titles">
+    <h1>Einstellungen</h1>
+    <div class="sub">Affiliate-Dashboard</div>
+  </div>
+  <div class="spacer"></div>
+  <a class="nav-link" href="/">← Zum Dashboard</a>
+</header>
+<main>
 {% if saved %}<div class="flash">Gespeichert.</div>{% endif %}
 
 <form method="post" action="/settings">
@@ -364,6 +396,7 @@ td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid #e6e8e1}
 <form method="post" action="/api/sync-form">
   <button type="submit">Jetzt aktualisieren</button>
 </form>
+</main>
 </body></html>
 """
 
@@ -375,7 +408,8 @@ def settings_page():
         pages = store.list_pages()
         product_tabs = store.list_product_tabs()
     return render_template_string(_SETTINGS_TEMPLATE, s=s, pages=pages, product_tabs=product_tabs,
-                                   saved=request.args.get("saved"))
+                                   saved=request.args.get("saved"),
+                                   favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri())
 
 
 @app.route("/settings", methods=["POST"])

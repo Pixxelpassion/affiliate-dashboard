@@ -2,14 +2,19 @@
 andere Granularitaet als ``affiliate.db``/``seo.db``).
 
 Tabellen:
-    catalog     -- ein Produkt je (tracking_id, asin), aus dem Google-Sheet-Katalog-Tab
-                   gelesen. Refresh-Strategie "replace-by-tab" (Voll-Snapshot je Tab).
-    status      -- manueller Verfuegbarkeits-Status je (tracking_id, asin). Wird NUR
-                   von der manuellen Check-API beschrieben, nie vom automatischen Sync.
-    visitors    -- GA4-Besucherzahl je (tracking_id, asin). Wird NUR beim Speichern
-                   eines Status-Eintrags aktualisiert (on-demand), nicht vom Sync.
-    page_links  -- Ergebnis des Site-Crawlers: welche eigenen Website-Seiten verlinken
-                   auf welche ASIN. Volles Replace je Crawl-Lauf.
+    catalog         -- ein Produkt je (tracking_id, asin), aus dem Google-Sheet-Katalog-Tab
+                       gelesen. Refresh-Strategie "replace-by-tab" (Voll-Snapshot je Tab).
+    status_history  -- APPEND-ONLY Verlauf der manuellen Verfuegbarkeits-Checks je
+                       (tracking_id, asin) -- bewusst kein Upsert/Overwrite: bei
+                       jaehrlicher statt woechentlicher Kontrolle braucht es den
+                       Vergleich zum vorherigen Check, um einen kurzfristigen
+                       Lagerengpass von dauerhaftem Delisting zu unterscheiden
+                       (zwei aufeinanderfolgende "nicht verfuegbar"-Checks). Wird
+                       NUR von der manuellen Check-API beschrieben, nie vom Sync.
+    visitors        -- GA4-Besucherzahl je (tracking_id, asin). Wird NUR beim Speichern
+                       eines Status-Eintrags aktualisiert (on-demand), nicht vom Sync.
+    page_links      -- Ergebnis des Site-Crawlers: welche eigenen Website-Seiten verlinken
+                       auf welche ASIN. Volles Replace je Crawl-Lauf.
 """
 
 from __future__ import annotations
@@ -32,13 +37,13 @@ CREATE TABLE IF NOT EXISTS catalog (
     PRIMARY KEY (tracking_id, asin)
 );
 
-CREATE TABLE IF NOT EXISTS status (
+CREATE TABLE IF NOT EXISTS status_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
     tracking_id TEXT NOT NULL,
     asin        TEXT NOT NULL,
     status      TEXT,
     note        TEXT,
-    checked_at  TEXT,
-    PRIMARY KEY (tracking_id, asin)
+    checked_at  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS visitors (
@@ -104,11 +109,13 @@ class ProductStore:
             out.append(d)
         return out
 
-    # --- status (nur manuelle Check-API) -----------------------------------
-    def upsert_status(self, tracking_id: str, asin: str, status: str, note: str = "") -> str:
+    # --- status_history (nur manuelle Check-API, append-only) --------------
+    def add_status_check(self, tracking_id: str, asin: str, status: str, note: str = "") -> str:
+        """Fuegt einen neuen Check hinzu, statt den vorherigen zu ueberschreiben --
+        siehe Modul-Docstring: der Vergleich zum vorherigen Check ist der Punkt."""
         ts = datetime.now().isoformat(timespec="seconds")
         self.conn.execute(
-            """INSERT OR REPLACE INTO status (tracking_id, asin, status, note, checked_at)
+            """INSERT INTO status_history (tracking_id, asin, status, note, checked_at)
                VALUES (?,?,?,?,?)""",
             (tracking_id, asin, status, note, ts),
         )
@@ -116,10 +123,33 @@ class ProductStore:
         return ts
 
     def all_status(self) -> list[dict]:
+        """Neuester Check je (tracking_id, asin), plus ``repeated_unavailable``:
+        True, wenn sowohl der neueste als auch der davor liegende Check
+        "unavailable" waren -- das Signal fuer dauerhaftes Delisting statt
+        eines kurzfristigen Lagerengpasses bei jaehrlicher Kontrolle."""
         rows = self.conn.execute(
-            "SELECT tracking_id, asin, status, note, checked_at FROM status"
+            """SELECT tracking_id, asin, status, note, checked_at FROM status_history
+               ORDER BY checked_at ASC, id ASC"""
         ).fetchall()
-        return [dict(r) for r in rows]
+        history: dict[tuple[str, str], list[dict]] = {}
+        for r in rows:
+            history.setdefault((r["tracking_id"], r["asin"]), []).append(dict(r))
+
+        result = []
+        for (tracking_id, asin), checks in history.items():
+            latest = checks[-1]
+            previous = checks[-2] if len(checks) >= 2 else None
+            result.append({
+                "tracking_id": tracking_id,
+                "asin": asin,
+                "status": latest["status"],
+                "note": latest["note"],
+                "checked_at": latest["checked_at"],
+                "repeated_unavailable": bool(
+                    previous and previous["status"] == "unavailable" and latest["status"] == "unavailable"
+                ),
+            })
+        return result
 
     # --- visitors (nur on-demand beim Status-Speichern) --------------------
     def upsert_visitors(self, tracking_id: str, asin: str, pageviews: int) -> str:

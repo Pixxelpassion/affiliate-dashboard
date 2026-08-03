@@ -10,12 +10,10 @@ da Amazon dies nicht mehr per Export bereitstellt).
 
 from __future__ import annotations
 
-import base64
 import json
 from datetime import date as _date, datetime, timedelta
-from pathlib import Path
 
-_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo_pixxelpassion.webp"
+from . import branding
 
 
 def _payload(monthly, meta, seo=None, products=None):
@@ -210,15 +208,6 @@ def _json(obj):
     return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
 
 
-def _logo_data_uri():
-    try:
-        data = _LOGO_PATH.read_bytes()
-        b64 = base64.b64encode(data).decode("ascii")
-        return f"data:image/webp;base64,{b64}"
-    except Exception:
-        return ""
-
-
 def build_html(monthly, *, source, marketplace, currency, seo=None, products=None):
     months = sorted({r["month"] for r in monthly})
     total_earnings = round(sum(float(r.get("earnings") or 0) for r in monthly), 2)
@@ -234,7 +223,8 @@ def build_html(monthly, *, source, marketplace, currency, seo=None, products=Non
     }
     payload = _payload(monthly, meta, seo, products)
     html = _TEMPLATE.replace("@@PAYLOAD@@", _json(payload))
-    html = html.replace("@@LOGO@@", _logo_data_uri())
+    html = html.replace("@@LOGO@@", branding.logo_data_uri())
+    html = html.replace("@@FAVICON@@", branding.FAVICON_LINK)
     html = html.replace("@@GENERATED@@", meta["generated"])
     html = html.replace("@@PERIOD@@", meta["period"])
     html = html.replace("@@SOURCE@@", source)
@@ -254,6 +244,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Affiliate-Einnahmen – Pixxelpassion</title>
+@@FAVICON@@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@500;600;700;800&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -269,8 +260,8 @@ header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0
 header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
 header .stand{color:var(--pp-muted);font-size:.78rem;text-align:right}
-header .settings-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:8px;padding:.4rem .8rem;white-space:nowrap}
-header .settings-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
+header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
 main{padding:1.4rem 2rem 2.5rem;max-width:1290px;margin:0 auto}
 .filterbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;background:linear-gradient(90deg,color-mix(in srgb,var(--pp-green) 16%,var(--pp-card)),var(--pp-card) 70%);border:1px solid color-mix(in srgb,var(--pp-green) 40%,var(--pp-border));border-left:6px solid var(--pp-green);border-radius:14px;padding:.85rem 1.15rem;margin-bottom:1.2rem}
 .filterbar .bigctl{font-family:var(--head-font);font-weight:700;font-size:1.02rem;display:flex;align-items:center;gap:.6rem;color:var(--pp-ink)}
@@ -322,9 +313,11 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
 .seo-event-row input[type=date],.seo-event-row input[type=text]{font-family:var(--body-font);padding:.45rem .65rem;font-size:.9rem;border:1px solid var(--pp-border);border-radius:8px;background:var(--pp-card);color:var(--pp-ink)}
 .seo-event-text{flex:1;min-width:220px}
 .seo-event-text input{width:100%}
-.btn-primary,.btn-secondary{font-family:var(--body-font);padding:.5rem 1rem;border-radius:8px;font-weight:600;font-size:.88rem;cursor:pointer}
-.btn-primary{border:1px solid var(--pp-green-dark);background:var(--pp-green);color:var(--pp-ink)}
-.btn-secondary{border:1px solid var(--pp-border);background:var(--pp-card);color:var(--pp-ink)}
+.btn-primary,.btn-secondary{font-family:var(--body-font);padding:.5rem 1.1rem;border-radius:5px;font-weight:500;font-size:.88rem;cursor:pointer;border:none}
+.btn-primary{background:var(--pp-green);color:#fff}
+.btn-primary:hover{background:var(--pp-green-dark)}
+.btn-secondary{background:var(--pp-card);color:var(--pp-ink);border:1px solid var(--pp-border)}
+.btn-secondary:hover{border-color:var(--pp-green)}
 .seo-event-list{margin-top:.8rem;display:flex;flex-direction:column;gap:.4rem}
 .seo-event-item{display:flex;align-items:center;gap:.6rem;font-size:.85rem;padding:.4rem .6rem;border:1px solid var(--pp-border);border-radius:8px;background:var(--pp-bg2)}
 .seo-event-item .ev-date{font-weight:600;color:var(--pp-green-dark);white-space:nowrap}
@@ -347,6 +340,9 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
 .products-check-row .pcr-note{flex:2;min-width:180px}
 .pcr-pages{flex-basis:100%;font-size:.78rem;color:var(--pp-muted)}
 .pcr-pages a{color:var(--pp-teal)}
+.pcr-pages{width:100%;font-size:.82rem;color:var(--pp-muted)}
+.pcr-page-list{margin:.3rem 0 0;padding-left:1.3rem}
+.pcr-page-list li{margin-bottom:.15rem}
 .pcr-result{font-size:.78rem;color:var(--pp-green-dark);min-width:110px}
 </style>
 </head>
@@ -359,7 +355,7 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
     <div class="sub">Amazon PartnerNet · Monat × Tracking-ID</div>
   </div>
   <div class="spacer"></div>
-  <a class="settings-link" href="/settings">⚙ Einstellungen</a>
+  <a class="nav-link" href="/settings">⚙ Einstellungen</a>
   <div class="stand">Stand: @@GENERATED@@<br>Zeitraum: @@PERIOD@@ · Quelle: @@SOURCE@@</div>
 </header>
 
@@ -874,7 +870,12 @@ function medianOf(nums){
   return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
 }
 function recommendation(it, med){
-  if(it.status === 'unavailable') return (it.pageviews||0) >= med ? 'Alternative suchen' : 'Kann gelöscht werden';
+  if(it.status === 'unavailable'){
+    if(!it.repeated_unavailable) return 'Kürzlich nicht verfügbar – nächstes Jahr erneut prüfen';
+    return (it.pageviews||0) >= med
+      ? 'Dauerhaft nicht verfügbar – Alternative suchen'
+      : 'Dauerhaft nicht verfügbar – kann gelöscht werden';
+  }
   if(it.status === 'newer_available' || it.status === 'alternative_available') return 'Prüfen: '+(it.note || '–');
   return '';
 }
@@ -885,9 +886,34 @@ async function loadProductsItems(tid){
     return data.items || [];
   } catch(e){ return []; }
 }
+let productsSort = {key: 'pageviews', dir: 'desc'};
+
+function sortProductsItems(items, med){
+  const {key, dir} = productsSort;
+  const mul = dir === 'asc' ? 1 : -1;
+  return items.slice().sort((a,b) => {
+    let av, bv;
+    if(key === 'pageviews'){ av = a.pageviews||0; bv = b.pageviews||0; }
+    else if(key === 'status'){ av = statusLabel(a.status); bv = statusLabel(b.status); }
+    else if(key === 'rec'){ av = recommendation(a, med); bv = recommendation(b, med); }
+    else { av = (a[key]||'').toString().toLowerCase(); bv = (b[key]||'').toString().toLowerCase(); }
+    if(av < bv) return -1*mul;
+    if(av > bv) return 1*mul;
+    return 0;
+  });
+}
+function setProductsSort(key){
+  if(productsSort.key === key) productsSort.dir = productsSort.dir === 'asc' ? 'desc' : 'asc';
+  else productsSort = {key, dir: key === 'pageviews' ? 'desc' : 'asc'};
+  renderProductsTable();
+}
+function sortArrow(key){
+  if(productsSort.key !== key) return '';
+  return productsSort.dir === 'asc' ? ' ▲' : ' ▼';
+}
 function renderProductsTable(){
-  const items = productsItems.slice().sort((a,b)=>(b.pageviews||0)-(a.pageviews||0));
-  const med = medianOf(items.map(it=>it.pageviews||0));
+  const med = medianOf(productsItems.map(it=>it.pageviews||0));
+  const items = sortProductsItems(productsItems, med);
   const rows = items.map(it => {
     const rec = recommendation(it, med);
     const visitorsCell = it.pageviews!=null
@@ -899,9 +925,18 @@ function renderProductsTable(){
       '<td>'+(rec ? '<span class="rec-badge">'+esc(rec)+'</span>' : '')+'</td></tr>';
   }).join('');
   document.getElementById('productsTableWrap').innerHTML =
-    '<table><thead><tr><th>Produkt</th><th>Kategorie</th><th>Status</th><th>Besucher (365 Tage)</th><th>Empfehlung</th></tr></thead><tbody>'+
+    '<table><thead><tr>'+
+    '<th class="sortable" data-sort="name">Produkt'+sortArrow('name')+'</th>'+
+    '<th class="sortable" data-sort="category">Kategorie'+sortArrow('category')+'</th>'+
+    '<th class="sortable" data-sort="status">Status'+sortArrow('status')+'</th>'+
+    '<th class="sortable" data-sort="pageviews">Besucher (365 Tage)'+sortArrow('pageviews')+'</th>'+
+    '<th class="sortable" data-sort="rec">Empfehlung'+sortArrow('rec')+'</th>'+
+    '</tr></thead><tbody>'+
     (rows || '<tr><td colspan="5">Keine Produkte fuer diese Tracking-ID.</td></tr>')+'</tbody></table>';
   document.getElementById('productsCount').textContent = items.length+' Produkt'+(items.length===1?'':'e');
+  document.querySelectorAll('#productsTableWrap th.sortable').forEach(th => {
+    th.addEventListener('click', () => setProductsSort(th.dataset.sort));
+  });
 }
 async function renderProducts(){
   if(!PRODUCTS || !PRODUCTS.tracking_ids || !PRODUCTS.tracking_ids.length) return;
@@ -936,7 +971,7 @@ function openProductsOverlay(){
   const statusOptions = ['', 'available', 'unavailable', 'newer_available', 'alternative_available'];
   document.getElementById('productsOverlayList').innerHTML = items.map(it => {
     const pagesHtml = it.pages.length
-      ? 'Beworben auf: ' + it.pages.map(u=>'<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\//,''))+'</a>').join(', ')
+      ? 'Beworben auf:<ul class="pcr-page-list">' + it.pages.map(u=>'<li><a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u.replace(/^https?:\/\//,''))+'</a></li>').join('') + '</ul>'
       : 'Beworben auf: (laut letztem Website-Crawl keine Seite gefunden)';
     const optionsHtml = statusOptions.map(s =>
       '<option value="'+s+'"'+((it.status||'')===s?' selected':'')+'>'+(s?esc(statusLabel(s)):'Ungeprüft')+'</option>').join('');
