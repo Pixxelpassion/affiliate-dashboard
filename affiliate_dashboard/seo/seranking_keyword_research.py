@@ -17,6 +17,13 @@ Verifiziert gegen die echte API (Stand 2026-08):
 
 Wichtig: Keywords muessen mit echten Umlauten (nicht transliteriert) gesendet werden,
 sonst liefert ``export`` ``is_data_found: false``.
+
+**Kosten-Achtung (echter Vorfall, siehe [[affiliate-dashboard-seo-research-agent]]):**
+``similar``/``related``/``questions`` kosten 10 Credits PRO ZURUECKGEGEBENEM Keyword,
+nicht pro Anfrage -- und der ``limit``-Parameter hat serverseitig einen Default von
+**100**. Ohne explizites Limit kostet ein einzelner Aufruf im schlimmsten Fall 1000
+Credits. Deshalb wird hier IMMER ein niedriges Limit (``_DEFAULT_LIMIT``) explizit
+mitgeschickt.
 """
 
 from __future__ import annotations
@@ -26,6 +33,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 _BASE = "https://api.seranking.com/v1/keywords"
+_DEFAULT_LIMIT = 20  # API-Default waere 100 -- bei 10 Credits/Ergebnis (similar/related/
+                     # questions) sonst bis zu 1000 Credits fuer EINEN Aufruf moeglich.
 
 
 def _get(api_key: str, path: str, params: dict):
@@ -46,29 +55,37 @@ def _post(api_key: str, path: str, params: dict, body: dict):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _cached(store, api_key, kind: str, keyword: str, region: str, max_age_days: int, fetcher):
-    cached = store.get_research_cache(keyword, kind, region, max_age_days=max_age_days)
+def _cached(store, api_key, kind: str, keyword: str, region: str, max_age_days: int,
+            limit: int, fetcher):
+    # Limit ist Teil des Cache-Keys (ueber den kind-String) -- ein mit anderem Limit
+    # gecachtes Ergebnis darf nicht fuer ein anderes Limit zurueckgegeben werden.
+    cache_kind = f"{kind}_l{limit}"
+    cached = store.get_research_cache(keyword, cache_kind, region, max_age_days=max_age_days)
     if cached is not None:
         return cached
-    response = fetcher(api_key, kind, {"source": region, "keyword": keyword})
-    store.set_research_cache(keyword, kind, region, response)
+    response = fetcher(api_key, kind, {"source": region, "keyword": keyword, "limit": limit})
+    store.set_research_cache(keyword, cache_kind, region, response)
     return response
 
 
-def fetch_similar(store, api_key: str, keyword: str, region: str = "de", *, max_age_days: int = 30) -> dict:
-    return _cached(store, api_key, "similar", keyword, region, max_age_days, _get)
+def fetch_similar(store, api_key: str, keyword: str, region: str = "de", *,
+                   max_age_days: int = 30, limit: int = _DEFAULT_LIMIT) -> dict:
+    return _cached(store, api_key, "similar", keyword, region, max_age_days, limit, _get)
 
 
-def fetch_related(store, api_key: str, keyword: str, region: str = "de", *, max_age_days: int = 30) -> dict:
-    return _cached(store, api_key, "related", keyword, region, max_age_days, _get)
+def fetch_related(store, api_key: str, keyword: str, region: str = "de", *,
+                   max_age_days: int = 30, limit: int = _DEFAULT_LIMIT) -> dict:
+    return _cached(store, api_key, "related", keyword, region, max_age_days, limit, _get)
 
 
-def fetch_questions(store, api_key: str, keyword: str, region: str = "de", *, max_age_days: int = 30) -> dict:
-    return _cached(store, api_key, "questions", keyword, region, max_age_days, _get)
+def fetch_questions(store, api_key: str, keyword: str, region: str = "de", *,
+                     max_age_days: int = 30, limit: int = _DEFAULT_LIMIT) -> dict:
+    return _cached(store, api_key, "questions", keyword, region, max_age_days, limit, _get)
 
 
-def fetch_longtail(store, api_key: str, keyword: str, region: str = "de", *, max_age_days: int = 30) -> dict:
-    return _cached(store, api_key, "longtail", keyword, region, max_age_days, _get)
+def fetch_longtail(store, api_key: str, keyword: str, region: str = "de", *,
+                    max_age_days: int = 30, limit: int = _DEFAULT_LIMIT) -> dict:
+    return _cached(store, api_key, "longtail", keyword, region, max_age_days, limit, _get)
 
 
 def export_metrics(store, api_key: str, keywords: list[str], region: str = "de",

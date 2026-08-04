@@ -28,6 +28,7 @@ from . import (
     ga4_client,
     google_auth,
     gsc_client,
+    seranking_client,
     seranking_keyword_research,
     seranking_pages_sync,
     seo_run,
@@ -153,7 +154,9 @@ def build_digest(cfg: Config, seo_store: SeoStore, settings_store: SettingsStore
     se_cfg = cfg.get("seo", {}).get("seranking", {})
     if se_cfg.get("api_key") and se_cfg.get("project_id"):
         try:
-            discovery = seranking_pages_sync.discover(cfg)
+            discovery = seranking_pages_sync.discover(
+                se_cfg["api_key"], se_cfg["project_id"], cfg.get("seo", {}).get("gsc", {}).get("property", ""),
+            )
             unassigned = discovery["unassigned"]
             all_tracked = sorted({kw for e in pages_cfg for kw in e.get("keywords", [])} | set(unassigned))
             volumes = seranking_keyword_research.export_metrics(
@@ -273,6 +276,243 @@ def run(cfg: Config, settings_store: SettingsStore) -> Path:
     report_path = report_dir / f"seo-analyse-{date.today().isoformat()}.md"
     report_path.write_text(report_text, encoding="utf-8")
     return report_path
+
+
+# --- Recherche-Projekte (Mehr-Nischen-Audits + Dialog) -----------------------------
+# Explizite Parameter statt Config-Objekt (im Gegensatz zu build_digest()/run() oben,
+# die unveraendert bleiben) -- research_projects ist eine variable Liste, kein fester
+# Pfad in einem verschachtelten Dict wie seo.gsc.property. gsc_client/ga4_client/
+# seranking_client nehmen ohnehin schon explizite Parameter, das passt stilistisch.
+
+def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_client_obj,
+                          seranking_api_key: str, seo_store: SeoStore,
+                          window_days: int = _WINDOW_DAYS,
+                          cannibalization_window_days: int = _CANNIBALIZATION_WINDOW_DAYS) -> dict:
+    """project: {id, label, gsc_property, ga4_property_id, seranking_project_id,
+    auto_discover_pages}. Analog build_digest(), aber ALLE Zahlen live abgerufen --
+    kein seo_store-Verlauf noetig (im Gegensatz zum globalen, taeglich per Cron
+    akkumulierenden SEO-Monitoring). Ein Recherche-Projekt bekommt so ohne vorherige
+    Sync-Historie sofort einen vollstaendigen Audit. Rang-Trend wird NICHT weggelassen --
+    seranking_client.fetch_daily() liefert die von SE Ranking bereits gespeicherte
+    Positions-Historie live per Datumsbereich (genau wie GSC), keine eigene
+    Akkumulation noetig (siehe Architektur-Notiz im Plan)."""
+    windows = _windows()
+    combined_start, combined_end = windows["previous"][0], windows["current"][1]
+    property_url = project.get("gsc_property") or ""
+    ga4_property_id = project.get("ga4_property_id") or ""
+    seranking_project_id = project.get("seranking_project_id") or ""
+    label = project.get("label", "")
+
+    pages_digest = []
+    all_query_rows = []
+    cann_end = date.today() - timedelta(days=_LAG_DAYS)
+    cann_start = cann_end - timedelta(days=cannibalization_window_days)
+
+    for entry in pages:
+        page = entry["url"]
+        keywords = entry.get("keywords", [])
+
+        gsc_rows: list[dict] = []
+        if gsc_service is not None and property_url:
+            try:
+                gsc_rows = gsc_client.fetch_daily(gsc_service, property_url, page, keywords,
+                                                   combined_start, combined_end)
+                all_query_rows.extend(gsc_client.fetch_all_queries(
+                    gsc_service, property_url, page, cann_start.isoformat(), cann_end.isoformat()
+                ))
+            except Exception as exc:  # noqa: BLE001
+                print(f"Recherche-Projekt {label}: GSC-Abruf fuer {page!r} fehlgeschlagen ({exc})",
+                      file=sys.stderr)
+
+        ga4_rows: list[dict] = []
+        if ga4_client_obj is not None and ga4_property_id:
+            try:
+                ga4_rows = ga4_client.fetch_daily(ga4_client_obj, ga4_property_id, page,
+                                                   combined_start, combined_end)
+            except Exception as exc:  # noqa: BLE001
+                print(f"Recherche-Projekt {label}: GA4-Abruf fuer {page!r} fehlgeschlagen ({exc})",
+                      file=sys.stderr)
+
+        rank_rows: list[dict] = []
+        if seranking_api_key and seranking_project_id and keywords:
+            try:
+                rank_rows = seranking_client.fetch_daily(
+                    seranking_api_key, seranking_project_id, page, keywords,
+                    combined_start, combined_end,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"Recherche-Projekt {label}: SE-Ranking-Abruf fuer {page!r} fehlgeschlagen ({exc})",
+                      file=sys.stderr)
+
+        pages_digest.append({
+            "url": page or "/",
+            "keywords_tracked": keywords,
+            "gsc": {"last_30d": _gsc_stats(gsc_rows, page, windows["current"]),
+                    "prev_30d": _gsc_stats(gsc_rows, page, windows["previous"])},
+            "ga4": {"last_30d": _ga4_stats(ga4_rows, page, windows["current"]),
+                    "prev_30d": _ga4_stats(ga4_rows, page, windows["previous"])},
+            "rank": {"last_30d": _rank_stats(rank_rows, page, windows["current"]),
+                     "prev_30d": _rank_stats(rank_rows, page, windows["previous"])},
+            "events": [],  # projekt-eigene Livegang-Marker sind nicht Teil dieses Plans
+        })
+
+    cannibalization_findings = (
+        cannibalization.detect_cannibalization(all_query_rows) if all_query_rows else []
+    )
+
+    # Unzugeordnete Keywords + Keyword-Research (identisch zur Logik in build_digest()).
+    unassigned: list[str] = []
+    keyword_research: dict[str, dict] = {}
+    if seranking_api_key and seranking_project_id:
+        try:
+            discovery = seranking_pages_sync.discover(seranking_api_key, seranking_project_id, property_url)
+            unassigned = discovery["unassigned"]
+            all_tracked = sorted({kw for e in pages for kw in e.get("keywords", [])} | set(unassigned))
+            volumes = seranking_keyword_research.export_metrics(seo_store, seranking_api_key, all_tracked)
+            volume_by_kw = {v["keyword"]: v for v in volumes if v.get("is_data_found")}
+            for kw in unassigned:
+                similar = seranking_keyword_research.fetch_similar(seo_store, seranking_api_key, kw)
+                keyword_research[kw] = {
+                    "volume": volume_by_kw.get(kw, {}).get("volume"),
+                    "similar_keywords": similar.get("keywords", [])[:15],
+                }
+            for entry in pages_digest:
+                entry["keyword_volumes"] = {
+                    kw: volume_by_kw.get(kw, {}).get("volume") for kw in entry["keywords_tracked"]
+                }
+        except Exception as exc:  # noqa: BLE001
+            print(f"Recherche-Projekt {label}: Keyword-Research fehlgeschlagen ({exc})", file=sys.stderr)
+
+    return {
+        "niche": label,
+        "window": {"current": windows["current"], "previous": windows["previous"]},
+        "pages": pages_digest,
+        "cannibalization": cannibalization_findings,
+        "unassigned_keywords": unassigned,
+        "keyword_research": keyword_research,
+    }
+
+
+_PROJECT_AUDIT_SYSTEM_PROMPT = _REPORT_SYSTEM_PROMPT.replace(
+    "## Ungenutzte Keyword-Chancen",
+    """## Wettbewerbs-/Marktkontext
+Nutze das Search-Tool, um aktuell fuer die wichtigsten Keywords im Digest zu recherchieren:
+wer rankt gerade vorne (Wettbewerber-Domains), gibt es auffaellige Aenderungen im
+Suchverhalten (z. B. zunehmende KI-Suche/AI Overviews, steigende Wettbewerbsdichte)?
+Diese Daten liegen NICHT im Digest -- hole sie aktiv per Suche und belege sie mit Quellen.
+Kein SE-Ranking-SERP-Datensatz vorhanden; das ist bewusst so, siehe oben.
+
+## Ungenutzte Keyword-Chancen""",
+)
+
+_DIALOG_SYSTEM_PROMPT = """\
+Du bist derselbe SEO-Stratege, der den obigen Bericht erstellt hat. Beantworte \
+Rueckfragen zum Bericht praezise, auf Basis des mitgegebenen Digests und des bisherigen \
+Gespraechsverlaufs. Nutze bei Bedarf das Search-Tool fuer aktuelle Zusatzinformationen \
+(z. B. neue Wettbewerber, aktuelle Rankingaenderungen). Erfinde keine Zahlen, die nicht \
+im Digest stehen oder durch eine eigene Suche belegt sind.
+"""
+
+
+def _extract_sources(response) -> list[dict]:
+    """Grounding-Quellen aus einer Gemini-Antwort extrahieren (leer, wenn das Modell
+    das Search-Tool fuer diese Antwort nicht genutzt hat)."""
+    sources = []
+    try:
+        grounding = response.candidates[0].grounding_metadata
+        for chunk in (grounding.grounding_chunks or []) if grounding else []:
+            if chunk.web:
+                sources.append({"title": chunk.web.title, "uri": chunk.web.uri,
+                                 "domain": chunk.web.domain})
+    except (AttributeError, IndexError):
+        pass
+    return sources
+
+
+def _generate_with_search(contents, system_instruction: str, api_key: str,
+                           max_output_tokens: int = 16000) -> tuple[str, list[dict]]:
+    """Ein generate_content()-Call MIT Google-Search-Grounding-Tool -- bewusste, auf
+    diesen einen Zweck begrenzte Ausnahme von der sonstigen "kein Tool-Use fuers
+    Modell"-Architektur: Wettbewerberkontext laesst sich nicht vorab deterministisch
+    enumerieren (im Gegensatz zu den eigenen GSC/GA4/SE-Ranking-Zahlen)."""
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=_GEMINI_MODEL,
+        contents=contents,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            max_output_tokens=max_output_tokens,
+            tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
+        ),
+    )
+    return response.text, _extract_sources(response)
+
+
+def generate_audit_report(digest: dict, api_key: str) -> tuple[str, list[dict]]:
+    return _generate_with_search(json.dumps(digest, ensure_ascii=False),
+                                  _PROJECT_AUDIT_SYSTEM_PROMPT, api_key)
+
+
+def generate_dialog_reply(digest: dict, messages: list[dict], api_key: str) -> tuple[str, list[dict]]:
+    """``messages`` = kompletter bisheriger Thread (inkl. der neuen User-Frage) --
+    Gemini ist zustandslos, der ganze Verlauf muss bei jeder Nachricht erneut mit."""
+    contents = [genai_types.Content(
+        role="user", parts=[genai_types.Part(text=json.dumps(digest, ensure_ascii=False))],
+    )]
+    for m in messages:
+        role = "model" if m["role"] == "assistant" else "user"
+        contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=m["content"])]))
+    return _generate_with_search(contents, _DIALOG_SYSTEM_PROMPT, api_key)
+
+
+def start_project_audit(project: dict, settings_store: SettingsStore, research_store,
+                         seo_store: SeoStore, credentials, seranking_api_key: str,
+                         gemini_api_key: str) -> int:
+    """Optionaler Auto-Discover-Schritt, dann Digest + EIN Gemini-Call (mit
+    Search-Grounding), legt Audit + erste Thread-Nachricht an. Gibt audit_id zurueck."""
+    project_id = project["id"]
+    if project.get("auto_discover_pages"):
+        sync_result = seranking_pages_sync.sync_into_research_project(
+            seranking_api_key, project.get("seranking_project_id", ""),
+            project.get("gsc_property", ""), project_id, settings_store,
+        )
+        print(f"Recherche-Projekt {project['label']}: Seiten-Discovery -- "
+              f"{sync_result['added_pages']} neu, {sync_result['updated_pages']} aktualisiert, "
+              f"{len(sync_result['unassigned'])} unzugeordnete Keywords.")
+
+    pages = settings_store.list_research_project_pages(project_id)
+
+    gsc_service = None
+    ga4_client_obj = None
+    if credentials is not None:
+        try:
+            gsc_service = gsc_client.build_service(credentials)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Recherche-Projekt {project['label']}: GSC-Service-Aufbau fehlgeschlagen ({exc})",
+                  file=sys.stderr)
+        try:
+            ga4_client_obj = ga4_client.build_client(credentials)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Recherche-Projekt {project['label']}: GA4-Client-Aufbau fehlgeschlagen ({exc})",
+                  file=sys.stderr)
+
+    digest = build_project_digest(project, pages, gsc_service, ga4_client_obj,
+                                   seranking_api_key, seo_store)
+    report_text, sources = generate_audit_report(digest, gemini_api_key)
+    return research_store.create_audit(project_id, digest, report_text, sources)
+
+
+def continue_dialog(audit_id: int, user_message: str, research_store, gemini_api_key: str) -> str:
+    """Haengt ``user_message`` an, schickt den gesamten Thread + Digest erneut an
+    Gemini, haengt die Antwort (inkl. Quellen) an, gibt den Antworttext zurueck."""
+    audit = research_store.get_audit(audit_id)
+    if audit is None:
+        raise ValueError(f"Audit {audit_id} nicht gefunden")
+    research_store.add_message(audit_id, "user", user_message)
+    reply_text, sources = generate_dialog_reply(audit["digest"], research_store.list_messages(audit_id),
+                                                 gemini_api_key)
+    research_store.add_message(audit_id, "assistant", reply_text, sources)
+    return reply_text
 
 
 def main() -> int:

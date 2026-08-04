@@ -245,7 +245,38 @@ kein laufender Sync.
 **Kosten-Hinweis:** jeder Lauf verbraucht SE-Ranking-Data-API-Credits (gecacht, 30 Tage
 Standard-Gültigkeit — ein wiederholter Lauf für dieselben Keywords kostet keine weiteren
 Credits) sowie einen Gemini-API-Call (nutzungsbasiert, pro Lauf im niedrigen Cent- bis
-niedrigen Euro-Bereich).
+niedrigen Euro-Bereich). `similar`/`related`/`questions` kosten 10 Credits PRO
+zurückgegebenem Keyword (nicht pro Anfrage) — `seranking_keyword_research.py` begrenzt
+die Ergebnismenge deshalb fest auf 20 (statt des API-Defaults von 100), sonst könnte ein
+einzelner Aufruf bis zu 1000 Credits kosten (realer Vorfall: ein Testlauf ohne dieses
+Limit hat einen SE-Ranking-Account leergezogen).
+
+## Recherche-Bereich einrichten (Mehr-Nischen-Audits + Dialog, optional)
+
+Eigener Navigationsbereich (`/recherche`, Link im Header von `dashboard.html` und
+`/settings`) — im Unterschied zum SEO-Rechercheagent oben (an die eine global
+konfigurierte SEO-Monitoring-Nische gebunden, erzeugt eine einmalige Datei) hier:
+**mehrere Nischen parallel**, ein **dauerhaft gespeicherter Dialog** je Audit (kein
+Kopieren in ein anderes Chat-Tool nötig) und ein zusätzlicher **Wettbewerbs-/
+Marktkontext-Abschnitt** im Bericht (Gemini recherchiert dafür aktiv über das
+eingebaute Google-Search-Grounding-Tool, keine SE-Ranking-SERP-Daten nötig).
+
+**Einrichtung:**
+1. Unter `/settings` → „Recherche-Projekte" ein Projekt anlegen: Label (freier Name der
+   Nische), GSC-Property, GA4-Property-ID, SE-Ranking-Projekt-ID, optional
+   „Seiten/Keywords automatisch übernehmen" (identisch zum Auto-Discover oben, aber
+   projektspezifisch).
+2. Auf `/recherche` das Projekt auswählen, Seiten + Keywords eintragen (falls nicht
+   automatisch übernommen).
+3. „Recherche jetzt starten" — legt ein neues Audit mit dem generierten Bericht als
+   erste Nachricht an. Rückfragen direkt darunter stellen; jede Antwort wird dauerhaft
+   gespeichert (`data/research.db`) und bleibt beim nächsten Besuch sichtbar.
+
+**Rang-Trend auch für neue Projekte:** anders als man vermuten könnte, braucht das
+KEINE vorherige tägliche Sync-Historie — `seranking_client.fetch_daily()` liefert die
+von SE Ranking bereits gespeicherte Positions-Historie live über einen Datumsbereich
+(genau wie der GSC-Abruf), solange das SE-Ranking-Projekt selbst schon mindestens einen
+Check abgeschlossen hat.
 
 ## Deployment auf Hostinger (Live-Webapp)
 
@@ -346,7 +377,7 @@ Hostinger" oben.
 | `affiliate_dashboard/render.py` | erzeugt `dashboard.html` |
 | `affiliate_dashboard/adapters/` | `gsheet` / `csv` / `s3` (+ `base.py`) |
 | `affiliate_dashboard/seo/` | SEO-Monitoring: `google_auth.py`, `gsc_client.py`, `ga4_client.py`, `seranking_client.py`, `seo_store.py`, `seo_run.py` |
-| `affiliate_dashboard/seo/` (Rechercheagent) | `seranking_pages_sync.py` (Seiten-Discovery), `cannibalization.py`, `seranking_keyword_research.py`, `research_agent.py` |
+| `affiliate_dashboard/seo/` (Rechercheagent) | `seranking_pages_sync.py` (Seiten-Discovery), `cannibalization.py`, `seranking_keyword_research.py`, `research_agent.py`, `research_store.py` (Mehr-Nischen-Audits + Dialog, `data/research.db`) |
 | `affiliate_dashboard/products/` | Produkt-Lebenszyklus: `catalog_reader.py`, `ga4_traffic.py`, `site_crawler.py`, `store.py`, `products_run.py` |
 | `affiliate_dashboard/gsheet_fetch.py` | Gemeinsame CSV-Fetch-Mechanik (Umsatz-Import + Produkt-Katalog-Tabs) |
 | `affiliate_dashboard/server.py` | Flask-App fuer den Live-Betrieb (`/`, `/api/sync`, `/settings`, `/api/seo/events`, `/api/seo/research`, `/api/products`, `/api/products/status`) |

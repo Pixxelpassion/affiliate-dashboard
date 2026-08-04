@@ -40,6 +40,22 @@ CREATE TABLE IF NOT EXISTS product_tabs (
     site_base_url   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS research_projects (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    label                TEXT NOT NULL,
+    gsc_property         TEXT,
+    ga4_property_id      TEXT,
+    seranking_project_id TEXT,
+    auto_discover_pages  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS research_project_pages (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    research_project_id  INTEGER NOT NULL,
+    url                  TEXT NOT NULL,
+    keywords             TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -139,6 +155,73 @@ class SettingsStore:
 
     def delete_product_tab(self, tab_id: int) -> None:
         self.conn.execute("DELETE FROM product_tabs WHERE id = ?", (tab_id,))
+        self.conn.commit()
+
+    # --- Recherche-Projekte (Mehr-Nischen-Audits) ------------------------------
+    def list_research_projects(self) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT id, label, gsc_property, ga4_property_id, seranking_project_id,
+                      auto_discover_pages
+               FROM research_projects ORDER BY id"""
+        ).fetchall()
+        return [
+            {**dict(r), "auto_discover_pages": bool(r["auto_discover_pages"])}
+            for r in rows
+        ]
+
+    def get_research_project(self, project_id: int) -> dict | None:
+        row = self.conn.execute(
+            """SELECT id, label, gsc_property, ga4_property_id, seranking_project_id,
+                      auto_discover_pages
+               FROM research_projects WHERE id = ?""",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {**dict(row), "auto_discover_pages": bool(row["auto_discover_pages"])}
+
+    def add_research_project(self, label: str, gsc_property: str = "", ga4_property_id: str = "",
+                              seranking_project_id: str = "", auto_discover_pages: bool = False) -> None:
+        self.conn.execute(
+            """INSERT INTO research_projects
+               (label, gsc_property, ga4_property_id, seranking_project_id, auto_discover_pages)
+               VALUES (?, ?, ?, ?, ?)""",
+            (label.strip(), gsc_property.strip(), ga4_property_id.strip(),
+             seranking_project_id.strip(), int(auto_discover_pages)),
+        )
+        self.conn.commit()
+
+    def delete_research_project(self, project_id: int) -> None:
+        self.conn.execute("DELETE FROM research_project_pages WHERE research_project_id = ?",
+                           (project_id,))
+        self.conn.execute("DELETE FROM research_projects WHERE id = ?", (project_id,))
+        self.conn.commit()
+
+    def list_research_project_pages(self, project_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT id, research_project_id, url, keywords FROM research_project_pages
+               WHERE research_project_id = ? ORDER BY id""",
+            (project_id,),
+        ).fetchall()
+        return [{"id": r["id"], "research_project_id": r["research_project_id"],
+                  "url": r["url"], "keywords": json.loads(r["keywords"])} for r in rows]
+
+    def add_research_project_page(self, project_id: int, url: str, keywords: list[str]) -> None:
+        self.conn.execute(
+            "INSERT INTO research_project_pages (research_project_id, url, keywords) VALUES (?, ?, ?)",
+            (project_id, url.strip(), json.dumps(list(keywords))),
+        )
+        self.conn.commit()
+
+    def delete_research_project_page(self, page_id: int) -> None:
+        self.conn.execute("DELETE FROM research_project_pages WHERE id = ?", (page_id,))
+        self.conn.commit()
+
+    def update_research_project_page_keywords(self, page_id: int, keywords: list[str]) -> None:
+        self.conn.execute(
+            "UPDATE research_project_pages SET keywords = ? WHERE id = ?",
+            (json.dumps(list(keywords)), page_id),
+        )
         self.conn.commit()
 
     # --- SEO-Events (Livegang-Marker) -----------------------------------------

@@ -30,7 +30,9 @@ from .settings_store import SettingsStore
 from .products import ga4_traffic
 from .products.products_run import merge_items
 from .products.store import ProductStore
-from .seo import research_agent
+from .seo import google_auth, research_agent
+from .seo.research_store import ResearchStore
+from .seo.seo_store import SeoStore
 
 try:
     import fcntl  # nur auf Linux/Unix verfuegbar (Produktivserver)
@@ -40,8 +42,10 @@ except ImportError:
 app = Flask(__name__)
 
 _SETTINGS_DB = BASE_DIR / "data" / "settings.db"
+_RESEARCH_DB = BASE_DIR / "data" / "research.db"
 _SYNC_LOCK_PATH = BASE_DIR / "data" / "sync.lock"
 _RESEARCH_LOCK_PATH = BASE_DIR / "data" / "research.lock"
+_RESEARCH_PROJECT_LOCK_DIR = BASE_DIR / "data"
 
 # gunicorn laeuft mit mehreren Worker-PROZESSEN (-w 4) -- ein einfaches
 # threading.Lock() waere je Prozess getrennt und wuerde NICHT verhindern, dass
@@ -123,8 +127,36 @@ def _is_research_running() -> bool:
     return _is_locked(_RESEARCH_LOCK_PATH, _local_research_lock)
 
 
+# Ein Lock PRO Recherche-Projekt (nicht global) -- Projekt A soll Projekt B nicht
+# blockieren. Lazy angelegtes lokales Lock-Objekt je project_id (gunicorn-Worker
+# nutzen ohnehin den Datei-Lock, das lokale Dict ist nur der Windows/Einzelprozess-Fallback).
+_local_research_project_locks: dict[int, threading.Lock] = {}
+
+
+def _local_lock_for_project(project_id: int) -> threading.Lock:
+    return _local_research_project_locks.setdefault(project_id, threading.Lock())
+
+
+def _try_acquire_research_project_lock(project_id: int):
+    return _try_acquire_lock(_RESEARCH_PROJECT_LOCK_DIR / f"research_project_{project_id}.lock",
+                              _local_lock_for_project(project_id))
+
+
+def _release_research_project_lock(project_id: int, handle) -> None:
+    _release_lock(handle, _local_lock_for_project(project_id))
+
+
+def _is_research_project_running(project_id: int) -> bool:
+    return _is_locked(_RESEARCH_PROJECT_LOCK_DIR / f"research_project_{project_id}.lock",
+                       _local_lock_for_project(project_id))
+
+
 def _store() -> SettingsStore:
     return SettingsStore(_SETTINGS_DB)
+
+
+def _research_store() -> ResearchStore:
+    return ResearchStore(_RESEARCH_DB)
 
 
 def _cfg() -> Config:
@@ -134,6 +166,11 @@ def _cfg() -> Config:
 
 def _products_db_path(cfg: Config) -> Path:
     p = Path(cfg.get("products", {}).get("db_path", "data/products.db"))
+    return p if p.is_absolute() else (BASE_DIR / p)
+
+
+def _seo_db_path(cfg: Config) -> Path:
+    p = Path(cfg.get("seo", {}).get("db_path", "data/seo.db"))
     return p if p.is_absolute() else (BASE_DIR / p)
 
 
@@ -250,6 +287,268 @@ def download_report(filename: str):
     report_dir = Path(report_dir)
     report_dir = report_dir if report_dir.is_absolute() else (BASE_DIR / report_dir)
     return send_from_directory(report_dir, filename)
+
+
+# --- Recherche-Bereich (Mehr-Nischen-Audits + Dialog, siehe Plan "Recherche-Bereich") --
+# Eigener Navigationsbereich, kein Tab im generierten dashboard.html -- Recherche ist
+# live/interaktiv (POST-Requests, wachsender Zustand), die bestehenden Tabs sind
+# synchronisierte, statisch generierte Ansichten.
+
+_RECHERCHE_TEMPLATE = """
+<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recherche – Affiliate-Dashboard</title>
+{{ favicon|safe }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--pp-green:#b7cb3a;--pp-green-dark:#717e21;--pp-ink:#1A202C;--pp-muted:#6b7280;--pp-bg:#fbfbfb;--pp-card:#ffffff;--pp-border:#e6e8e1;--body-font:'Poppins','Segoe UI',system-ui,sans-serif;--head-font:'Montserrat','Poppins','Segoe UI',sans-serif}
+*{box-sizing:border-box}
+body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--pp-ink);-webkit-font-smoothing:antialiased}
+.topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,#09adbe 100%)}
+header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
+header img.logo{height:46px;width:auto}
+header .titles{line-height:1.15}
+header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
+header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
+header .spacer{flex:1}
+header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
+header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+main{padding:1.4rem 2rem 3rem;max-width:900px;margin:0 auto}
+h2{font-family:var(--head-font);font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--pp-border);padding-bottom:.3rem}
+label{display:block;margin-top:.9rem;font-size:.85rem;color:var(--pp-muted)}
+input[type=text]{width:100%;padding:.5rem .65rem;border:1px solid var(--pp-border);border-radius:5px;font-size:.95rem;margin-top:.25rem;font-family:var(--body-font);color:var(--pp-ink)}
+input:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--pp-green) 55%,transparent);border-color:var(--pp-green)}
+select{padding:.5rem .65rem;border:1px solid var(--pp-border);border-radius:5px;font-size:.95rem;font-family:var(--body-font);color:var(--pp-ink)}
+textarea{width:100%;min-height:5rem;padding:.5rem .65rem;border:1px solid var(--pp-border);border-radius:5px;font-size:.95rem;margin-top:.25rem;font-family:var(--body-font);color:var(--pp-ink);resize:vertical}
+button{font-family:var(--body-font);margin-top:1.2rem;padding:.5rem 1.1rem;border-radius:5px;border:none;background:var(--pp-green);color:#fff;font-weight:500;font-size:.9rem;cursor:pointer}
+button:hover{background:var(--pp-green-dark)}
+button:disabled{background:var(--pp-border);color:var(--pp-muted);cursor:not-allowed}
+table{width:100%;border-collapse:collapse;margin-top:.6rem;font-size:.88rem}
+td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--pp-border)}
+th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
+.small-btn{margin-top:0;padding:.3rem .6rem;font-size:.8rem;background:var(--pp-card);color:var(--pp-ink);border:1px solid var(--pp-border)}
+.small-btn:hover{background:var(--pp-card);border-color:var(--pp-neg,#b82105);color:#b82105}
+.flash{background:color-mix(in srgb,var(--pp-green) 18%,var(--pp-card));border:1px solid var(--pp-green);padding:.6rem 1rem;border-radius:5px;margin-bottom:1rem}
+.flash.error{background:color-mix(in srgb,#b82105 12%,var(--pp-card));border-color:#b82105}
+.audit-list{list-style:none;padding:0;margin:.6rem 0}
+.audit-list li{margin-bottom:.3rem}
+.audit-list a{text-decoration:none;color:var(--pp-ink);border:1px solid var(--pp-border);border-radius:5px;padding:.35rem .7rem;display:inline-block;font-size:.85rem}
+.audit-list a.active{border-color:var(--pp-green);background:color-mix(in srgb,var(--pp-green) 14%,var(--pp-card))}
+.thread{margin-top:1rem}
+.msg{border:1px solid var(--pp-border);border-radius:8px;padding:.9rem 1.1rem;margin-bottom:.8rem}
+.msg.assistant{background:var(--pp-card)}
+.msg.user{background:color-mix(in srgb,var(--pp-green) 8%,var(--pp-card))}
+.msg .role{font-family:var(--head-font);font-weight:600;font-size:.78rem;color:var(--pp-muted);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.03em}
+.msg .content{white-space:pre-wrap;font-size:.92rem;line-height:1.5}
+.msg .sources{margin-top:.6rem;font-size:.78rem;color:var(--pp-muted)}
+.msg .sources a{color:var(--pp-muted)}
+</style></head><body>
+<div class="topbar"></div>
+<header>
+  <img class="logo" src="{{ logo }}" alt="Pixxelpassion">
+  <div class="titles">
+    <h1>Recherche</h1>
+    <div class="sub">Affiliate-Dashboard</div>
+  </div>
+  <div class="spacer"></div>
+  <a class="nav-link" href="/">← Reporting &amp; Analyse</a>
+  <a class="nav-link" href="/settings">⚙ Einstellungen</a>
+</header>
+<main>
+
+<form method="get" action="/recherche">
+  <label>Projekt <select name="project" onchange="this.form.submit()">
+    {% for p in projects %}
+    <option value="{{ p.id }}" {{ 'selected' if p.id == project_id else '' }}>{{ p.label }}</option>
+    {% endfor %}
+  </select></label>
+  <noscript><button type="submit">Anzeigen</button></noscript>
+</form>
+
+{% if not projects %}
+<p>Noch kein Recherche-Projekt angelegt. Unter <a href="/settings">Einstellungen</a> im
+Abschnitt „Recherche-Projekte" eines hinzufügen.</p>
+{% elif project %}
+
+{% if run_status %}
+  {% if run_status.status == 'error' %}
+  <div class="flash error">Letzter Lauf fehlgeschlagen: {{ run_status.message }}</div>
+  {% endif %}
+{% endif %}
+
+<form method="post" action="/recherche/run">
+  <input type="hidden" name="project_id" value="{{ project.id }}">
+  <button type="submit" {{ 'disabled' if running else '' }}>{{ 'Läuft bereits…' if running else 'Recherche jetzt starten' }}</button>
+</form>
+
+<h2>Seiten + Keywords ({{ project.label }})</h2>
+<table>
+  <tr><th>URL</th><th>Keywords</th><th></th></tr>
+  {% for pg in pages %}
+  <tr>
+    <td>{{ pg.url }}</td>
+    <td>{{ pg.keywords|join(', ') }}</td>
+    <td><form method="post" action="/recherche/pages/{{ pg.id }}/delete" style="margin:0">
+      <input type="hidden" name="project_id" value="{{ project.id }}">
+      <button type="submit" class="small-btn">Löschen</button>
+    </form></td>
+  </tr>
+  {% endfor %}
+</table>
+<form method="post" action="/recherche/{{ project.id }}/pages/add">
+  <label>Neue Seite (Pfad relativ zur GSC-Property) <input type="text" name="url" placeholder="ratgeber/beispiel-seite/"></label>
+  <label>Keywords (Komma-getrennt) <input type="text" name="keywords" placeholder="keyword eins, keyword zwei"></label>
+  <button type="submit">Seite hinzufügen</button>
+</form>
+
+<h2>Audits</h2>
+{% if not audits %}
+<p>Noch kein Audit für dieses Projekt. Oben auf „Recherche jetzt starten" klicken.</p>
+{% else %}
+<ul class="audit-list">
+  {% for a in audits %}
+  <li><a class="{{ 'active' if a.id == audit_id else '' }}" href="/recherche?project={{ project.id }}&audit={{ a.id }}">{{ a.created_at[:16] }}</a></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if audit_id and messages %}
+<div class="thread">
+  {% for m in messages %}
+  <div class="msg {{ m.role }}">
+    <div class="role">{{ 'Bericht / Antwort' if m.role == 'assistant' else 'Du' }}</div>
+    <div class="content">{{ m.content }}</div>
+    {% if m.sources %}
+    <div class="sources">Quellen:
+      {% for s in m.sources %}<a href="{{ s.uri }}" target="_blank" rel="noopener">{{ s.title or s.domain or s.uri }}</a>{{ ', ' if not loop.last else '' }}{% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<form method="post" action="/recherche/{{ audit_id }}/message">
+  <label>Rückfrage <textarea name="message" placeholder="z.B. Welche Massnahme zuerst umsetzen?"></textarea></label>
+  <button type="submit">Senden</button>
+</form>
+{% endif %}
+
+{% endif %}
+</main>
+</body></html>
+"""
+
+
+@app.route("/recherche", methods=["GET"])
+def recherche_page():
+    project_id = request.args.get("project", type=int)
+    audit_id = request.args.get("audit", type=int)
+
+    with _store() as store:
+        projects = store.list_research_projects()
+        if project_id is None and projects:
+            project_id = projects[0]["id"]
+        project = store.get_research_project(project_id) if project_id else None
+        pages = store.list_research_project_pages(project_id) if project_id else []
+        raw_status = store.get_meta(f"research_run_status:{project_id}") if project_id else None
+
+    run_status = json.loads(raw_status) if raw_status else None
+
+    audits = []
+    messages = []
+    with _research_store() as rstore:
+        if project_id:
+            audits = rstore.list_audits(project_id)
+            if audit_id is None and audits:
+                audit_id = audits[0]["id"]
+            if audit_id:
+                messages = rstore.list_messages(audit_id)
+
+    return render_template_string(
+        _RECHERCHE_TEMPLATE, projects=projects, project=project, project_id=project_id,
+        pages=pages, audits=audits, audit_id=audit_id, messages=messages,
+        run_status=run_status,
+        running=_is_research_project_running(project_id) if project_id else False,
+        favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
+    )
+
+
+@app.route("/recherche/run", methods=["POST"])
+def recherche_run():
+    project_id = request.form.get("project_id", type=int)
+    if project_id is None:
+        return redirect("/recherche")
+
+    lock_handle = _try_acquire_research_project_lock(project_id)
+    if lock_handle is None:
+        return redirect(f"/recherche?project={project_id}")
+
+    def _worker():
+        try:
+            with _store() as store:
+                project = store.get_research_project(project_id)
+                cfg = Config.from_settings_store(store)
+                seranking_api_key = cfg.get("seo", {}).get("seranking", {}).get("api_key", "")
+                gemini_api_key = cfg.get("seo", {}).get("gemini", {}).get("api_key", "")
+                try:
+                    credentials = google_auth.get_credentials(cfg)
+                except Exception:  # noqa: BLE001
+                    credentials = None
+                with SeoStore(_seo_db_path(cfg)) as seo_store, _research_store() as rstore:
+                    audit_id = research_agent.start_project_audit(
+                        project, store, rstore, seo_store, credentials,
+                        seranking_api_key, gemini_api_key,
+                    )
+            result = {"status": "ok", "audit_id": audit_id}
+        except Exception as exc:  # noqa: BLE001
+            result = {"status": "error", "message": str(exc)}
+        finally:
+            with _store() as store:
+                store.set_meta(f"research_run_status:{project_id}", json.dumps(result))
+            _release_research_project_lock(project_id, lock_handle)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return redirect(f"/recherche?project={project_id}")
+
+
+@app.route("/recherche/<int:audit_id>/message", methods=["POST"])
+def recherche_message(audit_id: int):
+    """Bewusst SYNCHRON (kein Hintergrund-Thread) -- ein einzelner Gemini-Call ist
+    schnell genug, und der Nutzer erwartet die Antwort direkt nach dem Formular-Reload."""
+    message = request.form.get("message", "").strip()
+    with _research_store() as rstore:
+        audit = rstore.get_audit(audit_id)
+        if audit is None:
+            return redirect("/recherche")
+        project_id = audit["research_project_id"]
+        if message:
+            gemini_api_key = _cfg().get("seo", {}).get("gemini", {}).get("api_key", "")
+            if gemini_api_key:
+                try:
+                    research_agent.continue_dialog(audit_id, message, rstore, gemini_api_key)
+                except Exception as exc:  # noqa: BLE001
+                    rstore.add_message(audit_id, "assistant", f"Fehler bei der Anfrage: {exc}")
+    return redirect(f"/recherche?project={project_id}&audit={audit_id}")
+
+
+@app.route("/recherche/<int:project_id>/pages/add", methods=["POST"])
+def recherche_add_page(project_id: int):
+    url = request.form.get("url", "").strip()
+    keywords = [k.strip() for k in request.form.get("keywords", "").split(",") if k.strip()]
+    if keywords:
+        with _store() as store:
+            store.add_research_project_page(project_id, url, keywords)
+    return redirect(f"/recherche?project={project_id}")
+
+
+@app.route("/recherche/pages/<int:page_id>/delete", methods=["POST"])
+def recherche_delete_page(page_id: int):
+    project_id = request.form.get("project_id", type=int)
+    with _store() as store:
+        store.delete_research_project_page(page_id)
+    return redirect(f"/recherche?project={project_id}" if project_id else "/recherche")
 
 
 # --- SEO-Events-API (ersetzt die fruehere localStorage-Loesung) ------------------
@@ -386,7 +685,8 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     <div class="sub">Affiliate-Dashboard</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/">← Zum Dashboard</a>
+  <a class="nav-link" href="/">← Reporting &amp; Analyse</a>
+  <a class="nav-link" href="/recherche">Recherche</a>
 </header>
 <main>
 {% if saved %}<div class="flash">Gespeichert.</div>{% endif %}
@@ -429,6 +729,33 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     {% endif %}
   {% endif %}
 </form>
+
+<h2>Recherche-Projekte (eine Nische je Zeile)</h2>
+<table>
+  <tr><th>Label</th><th>GSC-Property</th><th>GA4-Property-ID</th><th>SE-Ranking-Projekt-ID</th><th>Auto-Discover</th><th></th></tr>
+  {% for p in research_projects %}
+  <tr>
+    <td>{{ p.label }}</td>
+    <td>{{ p.gsc_property }}</td>
+    <td>{{ p.ga4_property_id }}</td>
+    <td>{{ p.seranking_project_id }}</td>
+    <td>{{ 'ja' if p.auto_discover_pages else 'nein' }}</td>
+    <td><form method="post" action="/settings/research-projects/{{ p.id }}/delete" style="margin:0">
+      <button type="submit" class="small-btn">Löschen</button>
+    </form></td>
+  </tr>
+  {% endfor %}
+</table>
+
+<form method="post" action="/settings/research-projects/add">
+  <label>Label (Nische) <input type="text" name="label" placeholder="Tischkreissägen"></label>
+  <label>GSC-Property <input type="text" name="gsc_property" placeholder="https://tischkreissaege-tests.de/"></label>
+  <label>GA4-Property-ID <input type="text" name="ga4_property_id" placeholder="386535911"></label>
+  <label>SE-Ranking-Projekt-ID <input type="text" name="seranking_project_id" placeholder="12711020"></label>
+  <label><input type="checkbox" name="auto_discover_pages"> Seiten/Keywords automatisch aus SE-Ranking-Projekt übernehmen</label>
+  <button type="submit">Projekt hinzufügen</button>
+</form>
+<p style="font-size:.82rem;color:var(--pp-muted)">Seiten/Keywords je Projekt werden direkt unter <a href="/recherche">Recherche</a> gepflegt, nicht hier.</p>
 
 <h2>SEO-Watchlist (Seiten + Keywords)</h2>
 <table>
@@ -496,9 +823,11 @@ def settings_page():
         s = store.all_settings()
         pages = store.list_pages()
         product_tabs = store.list_product_tabs()
+        research_projects = store.list_research_projects()
         raw_research = store.get_meta("last_research_result")
     last_research = json.loads(raw_research) if raw_research else None
     return render_template_string(_SETTINGS_TEMPLATE, s=s, pages=pages, product_tabs=product_tabs,
+                                   research_projects=research_projects,
                                    last_research=last_research,
                                    saved=request.args.get("saved"),
                                    favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri())
@@ -569,6 +898,27 @@ def settings_add_product_tab():
 def settings_delete_product_tab(tab_id: int):
     with _store() as store:
         store.delete_product_tab(tab_id)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/research-projects/add", methods=["POST"])
+def settings_add_research_project():
+    label = request.form.get("label", "").strip()
+    gsc_property = request.form.get("gsc_property", "").strip()
+    ga4_property_id = request.form.get("ga4_property_id", "").strip()
+    seranking_project_id = request.form.get("seranking_project_id", "").strip()
+    auto_discover_pages = bool(request.form.get("auto_discover_pages"))
+    if label:
+        with _store() as store:
+            store.add_research_project(label, gsc_property, ga4_property_id,
+                                        seranking_project_id, auto_discover_pages)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/research-projects/<int:project_id>/delete", methods=["POST"])
+def settings_delete_research_project(project_id: int):
+    with _store() as store:
+        store.delete_research_project(project_id)
     return redirect("/settings?saved=1")
 
 
