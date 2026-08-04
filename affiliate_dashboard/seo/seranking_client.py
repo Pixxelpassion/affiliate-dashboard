@@ -33,24 +33,27 @@ def _keyword_lookup(api_key: str, site_id: str) -> dict[str, dict]:
     return {kw["id"]: {"name": kw.get("name", ""), "link": kw.get("link", "")} for kw in data}
 
 
-def discover_pages(api_key: str, site_id: str) -> dict:
-    """Gruppiert alle Projekt-Keywords nach der in SE Ranking hinterlegten Ziel-URL.
+def _group_by_target(keyword_meta: list[dict]) -> dict:
+    """Gruppiert Keywords nach Ziel-URL -- gemeinsame Logik fuer den Live-API-Pfad
+    (``discover_pages``) und den CSV-Import-Pfad (``seranking_pages_sync.
+    discover_from_csv``). Erwartet eine Liste von ``{"name"|"keyword": ..., "link"|
+    "url": ...}``-Dicts (beide Feldnamen-Varianten werden akzeptiert, da Live-API und
+    CSV-Export unterschiedliche Feldnamen verwenden).
 
-    Nicht jedes Keyword hat eine Ziel-URL (``link``) -- diese landen unter
-    ``unassigned`` statt verworfen zu werden, sie sind fuer die Keyword-Research-/
-    Clustering-Stufe ein Befund (Content-Luecke), kein Fehler.
+    Nicht jedes Keyword hat eine Ziel-URL -- diese landen unter ``unassigned`` statt
+    verworfen zu werden, sie sind fuer die Keyword-Research-/Clustering-Stufe ein
+    Befund (Content-Luecke), kein Fehler.
 
     Gibt ``{"pages": [{"url": link, "keywords": [name, ...]}], "unassigned": [name, ...]}``
     zurueck.
     """
-    lookup = _keyword_lookup(api_key, site_id)
     by_link: dict[str, set[str]] = {}
     unassigned: set[str] = set()
-    for meta in lookup.values():
-        name = meta.get("name", "").strip()
+    for meta in keyword_meta:
+        name = (meta.get("name") or meta.get("keyword") or "").strip()
         if not name:
             continue
-        link = (meta.get("link") or "").strip()
+        link = (meta.get("link") or meta.get("url") or "").strip()
         if link:
             by_link.setdefault(link, set()).add(name)
         else:
@@ -59,6 +62,13 @@ def discover_pages(api_key: str, site_id: str) -> dict:
         "pages": [{"url": url, "keywords": sorted(kws)} for url, kws in sorted(by_link.items())],
         "unassigned": sorted(unassigned),
     }
+
+
+def discover_pages(api_key: str, site_id: str) -> dict:
+    """Gruppiert alle Projekt-Keywords nach der in SE Ranking hinterlegten Ziel-URL
+    (Live-API-Pfad). Siehe ``_group_by_target()`` fuer die Gruppierungslogik."""
+    lookup = _keyword_lookup(api_key, site_id)
+    return _group_by_target(list(lookup.values()))
 
 
 def fetch_daily(api_key: str, site_id: str, page_path: str, keywords: list[str],

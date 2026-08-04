@@ -19,6 +19,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from . import seranking_client
+from .seranking_client import _group_by_target
 
 
 def _relative_path(property_url: str, link: str) -> str | None:
@@ -43,6 +44,28 @@ def discover(api_key: str, project_id: str, property_url: str) -> dict:
         return {"pages": [], "unassigned": []}
 
     raw = seranking_client.discover_pages(api_key, project_id)
+    unassigned = set(raw["unassigned"])
+    pages = []
+    for entry in raw["pages"]:
+        rel = _relative_path(property_url, entry["url"])
+        if rel is None:
+            unassigned.update(entry["keywords"])
+        else:
+            pages.append({"url": rel, "keywords": entry["keywords"]})
+    return {"pages": pages, "unassigned": sorted(unassigned)}
+
+
+def discover_from_csv(parsed_keywords: list[dict], property_url: str) -> dict:
+    """Wie ``discover()``, aber aus einer per ``seranking_csv_import.
+    parse_keyword_list_csv()`` geparsten Keyword-Liste statt einem Live-API-Call --
+    gleiche Rueckgabeform (``{"pages": [...], "unassigned": [...]}``), gleiche
+    Gruppierungs- (``_group_by_target``) und Pfad-Normalisierungs-Logik
+    (``_relative_path``) wie der Live-Pfad.
+    """
+    if not property_url:
+        return {"pages": [], "unassigned": []}
+
+    raw = _group_by_target(parsed_keywords)
     unassigned = set(raw["unassigned"])
     pages = []
     for entry in raw["pages"]:

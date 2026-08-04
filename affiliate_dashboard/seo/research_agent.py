@@ -285,7 +285,7 @@ def run(cfg: Config, settings_store: SettingsStore) -> Path:
 # seranking_client nehmen ohnehin schon explizite Parameter, das passt stilistisch.
 
 def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_client_obj,
-                          seranking_api_key: str, seo_store: SeoStore,
+                          seranking_api_key: str, seo_store: SeoStore, research_store=None,
                           window_days: int = _WINDOW_DAYS,
                           cannibalization_window_days: int = _CANNIBALIZATION_WINDOW_DAYS) -> dict:
     """project: {id, label, gsc_property, ga4_property_id, seranking_project_id,
@@ -295,13 +295,31 @@ def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_clie
     Sync-Historie sofort einen vollstaendigen Audit. Rang-Trend wird NICHT weggelassen --
     seranking_client.fetch_daily() liefert die von SE Ranking bereits gespeicherte
     Positions-Historie live per Datumsbereich (genau wie GSC), keine eigene
-    Akkumulation noetig (siehe Architektur-Notiz im Plan)."""
+    Akkumulation noetig (siehe Architektur-Notiz im Plan).
+
+    ``research_store`` (optional): wenn gesetzt, wird PRO KATEGORIE (Rang-Historie,
+    Keyword-Research, Wettbewerber-Uebersicht) zuerst ein hochgeladener CSV-Import
+    geprueft (siehe ``seranking_csv_import.py``) und nur bei dessen Fehlen auf den
+    Live-API-Aufruf zurueckgefallen -- Mischbetrieb pro Projekt moeglich. Das
+    Digest-Feld ``data_sources`` haelt fest, woher jede Kategorie tatsaechlich kam,
+    damit der Bericht das in der Methodik-Sektion ehrlich ausweist."""
     windows = _windows()
     combined_start, combined_end = windows["previous"][0], windows["current"][1]
     property_url = project.get("gsc_property") or ""
     ga4_property_id = project.get("ga4_property_id") or ""
     seranking_project_id = project.get("seranking_project_id") or ""
     label = project.get("label", "")
+    project_id = project.get("id")
+    data_sources: dict[str, dict] = {}
+
+    csv_keyword_list = research_store.get_csv_import(project_id, "keyword_list") if research_store else None
+    csv_rank_rows_all: list[dict] = csv_keyword_list["data"]["rank_rows"] if csv_keyword_list else []
+    if csv_keyword_list is not None:
+        data_sources["rank"] = {"source": "csv", "uploaded_at": csv_keyword_list["uploaded_at"]}
+    elif seranking_api_key and seranking_project_id:
+        data_sources["rank"] = {"source": "live"}
+    else:
+        data_sources["rank"] = {"source": "nicht verfuegbar"}
 
     pages_digest = []
     all_query_rows = []
@@ -334,7 +352,13 @@ def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_clie
                       file=sys.stderr)
 
         rank_rows: list[dict] = []
-        if seranking_api_key and seranking_project_id and keywords:
+        if csv_keyword_list is not None:
+            wanted = {kw.strip().lower() for kw in keywords}
+            rank_rows = [
+                {"date": r["date"], "page": page, "keyword": r["keyword"], "position": r["position"]}
+                for r in csv_rank_rows_all if r["keyword"].strip().lower() in wanted
+            ]
+        elif seranking_api_key and seranking_project_id and keywords:
             try:
                 rank_rows = seranking_client.fetch_daily(
                     seranking_api_key, seranking_project_id, page, keywords,
@@ -360,10 +384,16 @@ def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_clie
         cannibalization.detect_cannibalization(all_query_rows) if all_query_rows else []
     )
 
-    # Unzugeordnete Keywords + Keyword-Research (identisch zur Logik in build_digest()).
+    # Unzugeordnete Keywords + Keyword-Volumen (CSV bevorzugt, sonst Live-API).
     unassigned: list[str] = []
     keyword_research: dict[str, dict] = {}
-    if seranking_api_key and seranking_project_id:
+    if csv_keyword_list is not None:
+        discovery = seranking_pages_sync.discover_from_csv(csv_keyword_list["data"]["keywords"], property_url)
+        unassigned = discovery["unassigned"]
+        volume_by_kw_csv = {k["keyword"]: k.get("search_volume") for k in csv_keyword_list["data"]["keywords"]}
+        for entry in pages_digest:
+            entry["keyword_volumes"] = {kw: volume_by_kw_csv.get(kw) for kw in entry["keywords_tracked"]}
+    elif seranking_api_key and seranking_project_id:
         try:
             discovery = seranking_pages_sync.discover(seranking_api_key, seranking_project_id, property_url)
             unassigned = discovery["unassigned"]
@@ -383,6 +413,30 @@ def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_clie
         except Exception as exc:  # noqa: BLE001
             print(f"Recherche-Projekt {label}: Keyword-Research fehlgeschlagen ({exc})", file=sys.stderr)
 
+    # Keyword-Opportunities: gepoolt aus hochgeladenen similar/related/questions-CSVs
+    # (diese Exporte sind je EINEM Seed-Begriff erzeugt, nicht je unassigned keyword
+    # wie im Live-Pfad -- deshalb ein separates, gepooltes Digest-Feld statt in
+    # keyword_research eingemischt).
+    keyword_opportunities: list[dict] = []
+    competitor_overview: list[dict] = []
+    if research_store is not None:
+        pool: dict[str, dict] = {}
+        for kind in ("keyword_similar", "keyword_related", "keyword_questions"):
+            imp = research_store.get_csv_import(project_id, kind)
+            if imp is None:
+                continue
+            data_sources[kind] = {"source": "csv", "uploaded_at": imp["uploaded_at"]}
+            for item in imp["data"]:
+                existing = pool.get(item["keyword"])
+                if existing is None or (item.get("volume") or 0) > (existing.get("volume") or 0):
+                    pool[item["keyword"]] = {**item, "source": kind}
+        keyword_opportunities = sorted(pool.values(), key=lambda x: -(x.get("volume") or 0))
+
+        organic_imp = research_store.get_csv_import(project_id, "organic")
+        if organic_imp is not None:
+            competitor_overview = organic_imp["data"]
+            data_sources["competitor_overview"] = {"source": "csv", "uploaded_at": organic_imp["uploaded_at"]}
+
     return {
         "niche": label,
         "window": {"current": windows["current"], "previous": windows["previous"]},
@@ -390,19 +444,26 @@ def build_project_digest(project: dict, pages: list[dict], gsc_service, ga4_clie
         "cannibalization": cannibalization_findings,
         "unassigned_keywords": unassigned,
         "keyword_research": keyword_research,
+        "keyword_opportunities": keyword_opportunities,
+        "competitor_overview": competitor_overview,
+        "data_sources": data_sources,
     }
 
 
 _PROJECT_AUDIT_SYSTEM_PROMPT = _REPORT_SYSTEM_PROMPT.replace(
     "## Ungenutzte Keyword-Chancen",
     """## Wettbewerbs-/Marktkontext
-Nutze das Search-Tool, um aktuell fuer die wichtigsten Keywords im Digest zu recherchieren:
-wer rankt gerade vorne (Wettbewerber-Domains), gibt es auffaellige Aenderungen im
-Suchverhalten (z. B. zunehmende KI-Suche/AI Overviews, steigende Wettbewerbsdichte)?
-Diese Daten liegen NICHT im Digest -- hole sie aktiv per Suche und belege sie mit Quellen.
-Kein SE-Ranking-SERP-Datensatz vorhanden; das ist bewusst so, siehe oben.
+Falls das Digest-Feld `competitor_overview` befuellt ist, nutze diese Daten (Position/
+URL/Traffic/Domain-Trust) als harte Grundlage. Nutze ZUSAETZLICH das Search-Tool, um
+aktuell fuer die wichtigsten Keywords im Digest zu recherchieren: gibt es auffaellige
+Aenderungen im Suchverhalten (z. B. zunehmende KI-Suche/AI Overviews, steigende
+Wettbewerbsdichte)? Belege Suchergebnisse mit Quellen.
 
-## Ungenutzte Keyword-Chancen""",
+## Ungenutzte Keyword-Chancen
+Nutze sowohl `unassigned_keywords`/`keyword_research` ALS AUCH `keyword_opportunities`
+(falls befuellt -- ein gepoolter Keyword-Fundus aus hochgeladenen SE-Ranking-Exporten,
+mit Suchvolumen/Schwierigkeit je Keyword, nicht 1:1 einem einzelnen unzugeordneten
+Keyword zugeordnet). Cluster bilden, Suchvolumen nennen, Zuordnungsvorschlag.""",
 )
 
 _DIALOG_SYSTEM_PROMPT = """\
@@ -497,7 +558,7 @@ def start_project_audit(project: dict, settings_store: SettingsStore, research_s
                   file=sys.stderr)
 
     digest = build_project_digest(project, pages, gsc_service, ga4_client_obj,
-                                   seranking_api_key, seo_store)
+                                   seranking_api_key, seo_store, research_store)
     report_text, sources = generate_audit_report(digest, gemini_api_key)
     return research_store.create_audit(project_id, digest, report_text, sources)
 

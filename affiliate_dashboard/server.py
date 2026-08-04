@@ -30,9 +30,11 @@ from .settings_store import SettingsStore
 from .products import ga4_traffic
 from .products.products_run import merge_items
 from .products.store import ProductStore
-from .seo import google_auth, research_agent
+from .seo import google_auth, research_agent, seranking_csv_import
 from .seo.research_store import ResearchStore
 from .seo.seo_store import SeoStore
+
+_CSV_IMPORT_KINDS = ("keyword_list", "keyword_similar", "keyword_related", "keyword_questions", "organic")
 
 try:
     import fcntl  # nur auf Linux/Unix verfuegbar (Produktivserver)
@@ -403,6 +405,30 @@ Abschnitt „Recherche-Projekte" eines hinzufügen.</p>
   <button type="submit">Seite hinzufügen</button>
 </form>
 
+<h2>Datenquelle (SE-Ranking-CSV statt Live-API, optional)</h2>
+<p style="font-size:.82rem;color:var(--pp-muted)">Falls hochgeladen, werden diese Daten
+statt eines Live-API-Aufrufs verwendet (kostet keine SE-Ranking-Credits) — ein
+Re-Upload ersetzt den vorherigen Import.</p>
+
+{% set csv_labels = {
+  'keyword_list': 'Keyword-Liste (Rank-Tracker-Export)',
+  'keyword_similar': 'Keyword-Research: Similar',
+  'keyword_related': 'Keyword-Research: Related',
+  'keyword_questions': 'Keyword-Research: Questions',
+  'organic': 'Wettbewerber-Übersicht (Organic-Export)',
+} %}
+{% for kind, label in csv_labels.items() %}
+<form method="post" action="/recherche/{{ project.id }}/csv/{{ kind }}" enctype="multipart/form-data" style="margin-top:.7rem">
+  <label>{{ label }}
+    {% if csv_imports.get(kind) %}<span style="color:var(--pp-green-dark)"> — zuletzt hochgeladen: {{ csv_imports[kind][:16] }}</span>{% else %}<span style="color:var(--pp-muted)"> — kein Import, Live-API wird genutzt</span>{% endif %}
+  </label>
+  {% if csv_errors.get(kind) %}<div class="flash error" style="margin:.4rem 0">{{ csv_errors[kind] }}</div>{% endif %}
+  <input type="file" name="file" accept=".csv">
+  {% if kind == 'organic' %}<input type="text" name="seed_keyword" placeholder="Seed-Keyword (z.B. Tischkreissäge)">{% endif %}
+  <button type="submit" class="small-btn">Hochladen</button>
+</form>
+{% endfor %}
+
 <h2>Audits</h2>
 {% if not audits %}
 <p>Noch kein Audit für dieses Projekt. Oben auf „Recherche jetzt starten" klicken.</p>
@@ -458,6 +484,7 @@ def recherche_page():
 
     audits = []
     messages = []
+    csv_imports = {}
     with _research_store() as rstore:
         if project_id:
             audits = rstore.list_audits(project_id)
@@ -465,11 +492,20 @@ def recherche_page():
                 audit_id = audits[0]["id"]
             if audit_id:
                 messages = rstore.list_messages(audit_id)
+            csv_imports = {row["kind"]: row["uploaded_at"] for row in rstore.list_csv_imports(project_id)}
+
+    csv_errors = {}
+    if project_id:
+        with _store() as store:
+            for kind in _CSV_IMPORT_KINDS:
+                err = store.get_meta(f"csv_import_error:{project_id}:{kind}")
+                if err:
+                    csv_errors[kind] = err
 
     return render_template_string(
         _RECHERCHE_TEMPLATE, projects=projects, project=project, project_id=project_id,
         pages=pages, audits=audits, audit_id=audit_id, messages=messages,
-        run_status=run_status,
+        run_status=run_status, csv_imports=csv_imports, csv_errors=csv_errors,
         running=_is_research_project_running(project_id) if project_id else False,
         favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
     )
@@ -549,6 +585,43 @@ def recherche_delete_page(page_id: int):
     with _store() as store:
         store.delete_research_project_page(page_id)
     return redirect(f"/recherche?project={project_id}" if project_id else "/recherche")
+
+
+@app.route("/recherche/<int:project_id>/csv/<kind>", methods=["POST"])
+def recherche_upload_csv(project_id: int, kind: str):
+    """CSV-Upload als Alternative zum Live-API-Aufruf (siehe seranking_csv_import.py) --
+    ein Re-Upload ersetzt den vorherigen Import komplett fuer diese Kategorie."""
+    if kind not in _CSV_IMPORT_KINDS:
+        return redirect(f"/recherche?project={project_id}")
+
+    upload = request.files.get("file")
+    error = None
+    parsed = None
+    if upload is None or not upload.filename:
+        error = "Keine Datei ausgewaehlt."
+    else:
+        data = upload.read()
+        try:
+            if kind == "keyword_list":
+                parsed = seranking_csv_import.parse_keyword_list_csv(data)
+            elif kind == "organic":
+                seed_keyword = request.form.get("seed_keyword", "").strip()
+                parsed = seranking_csv_import.parse_organic_csv(data, seed_keyword)
+            else:
+                parsed = seranking_csv_import.parse_keyword_suggestions_csv(data)
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+
+    with _store() as store:
+        meta_key = f"csv_import_error:{project_id}:{kind}"
+        if error:
+            store.set_meta(meta_key, error)
+        else:
+            store.set_meta(meta_key, "")
+            with _research_store() as rstore:
+                rstore.set_csv_import(project_id, kind, parsed)
+
+    return redirect(f"/recherche?project={project_id}")
 
 
 # --- SEO-Events-API (ersetzt die fruehere localStorage-Loesung) ------------------

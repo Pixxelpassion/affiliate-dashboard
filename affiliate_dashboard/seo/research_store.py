@@ -36,6 +36,17 @@ CREATE TABLE IF NOT EXISTS research_messages (
     sources_json TEXT,
     created_at   TEXT NOT NULL
 );
+
+-- Manuell hochgeladene SE-Ranking-CSV-Exporte je Projekt+Kategorie (Alternative zu
+-- den Live-API-Aufrufen, falls keine Credits verfuegbar sind). Ein Re-Upload ersetzt
+-- den vorherigen Import komplett (kein Verlauf noetig, immer der neueste Stand zaehlt).
+CREATE TABLE IF NOT EXISTS research_csv_imports (
+    research_project_id INTEGER NOT NULL,
+    kind                 TEXT NOT NULL,
+    uploaded_at          TEXT NOT NULL,
+    data_json            TEXT NOT NULL,
+    PRIMARY KEY (research_project_id, kind)
+);
 """
 
 
@@ -121,3 +132,30 @@ class ResearchStore:
              "created_at": r["created_at"]}
             for r in rows
         ]
+
+    # --- CSV-Importe (Alternative zur Live-API) --------------------------------
+    def set_csv_import(self, project_id: int, kind: str, data) -> None:
+        self.conn.execute(
+            """INSERT OR REPLACE INTO research_csv_imports
+               (research_project_id, kind, uploaded_at, data_json) VALUES (?, ?, ?, ?)""",
+            (project_id, kind, datetime.utcnow().isoformat(), json.dumps(data, ensure_ascii=False)),
+        )
+        self.conn.commit()
+
+    def get_csv_import(self, project_id: int, kind: str) -> dict | None:
+        row = self.conn.execute(
+            """SELECT uploaded_at, data_json FROM research_csv_imports
+               WHERE research_project_id = ? AND kind = ?""",
+            (project_id, kind),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"uploaded_at": row["uploaded_at"], "data": json.loads(row["data_json"])}
+
+    def list_csv_imports(self, project_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT kind, uploaded_at FROM research_csv_imports
+               WHERE research_project_id = ? ORDER BY kind""",
+            (project_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]

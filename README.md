@@ -278,6 +278,23 @@ von SE Ranking bereits gespeicherte Positions-Historie live über einen Datumsbe
 (genau wie der GSC-Abruf), solange das SE-Ranking-Projekt selbst schon mindestens einen
 Check abgeschlossen hat.
 
+**CSV-Import als Alternative zur SE-Ranking-API (optional, spart Credits):** auf
+`/recherche?project=<id>` unter „Datenquelle" lassen sich fünf SE-Ranking-Web-Exporte
+hochladen — sie ersetzen die entsprechenden Live-API-Aufrufe, sobald vorhanden (Mischbetrieb
+möglich, pro Kategorie unabhängig):
+- **Keyword-Liste** (Rank-Tracker → Export): ersetzt gleichzeitig Keyword→Seiten-Zuordnung
+  UND Positions-Historie.
+- **Similar/Related/Questions** (Keyword-Research-Tool → Export): ergibt einen gepoolten
+  Keyword-Opportunity-Fundus (anders als der Live-Pfad, der je unzugeordnetem Keyword
+  einen eigenen API-Call macht).
+- **Organic** (Wettbewerber-/Domain-Übersicht → Export, Seed-Keyword beim Upload angeben):
+  liefert harte Konkurrenzdaten (Traffic-Schätzung, Domain-/Page-Trust) zusätzlich zum
+  weiterhin aktiven Google-Search-Grounding.
+
+Web-Exporte kosten keine SE-Ranking-API-Credits. Ein Re-Upload ersetzt den vorherigen
+Import einer Kategorie vollständig; der Bericht weist in der Methodik-Sektion aus,
+welche Kategorie aus CSV bzw. Live-API stammt (`data_sources`-Digest-Feld).
+
 ## Deployment auf Hostinger (Live-Webapp)
 
 Analog zum bestehenden `parqet-dashboard` (https://portfolio.pixxelpassion.de) lässt sich
@@ -377,7 +394,7 @@ Hostinger" oben.
 | `affiliate_dashboard/render.py` | erzeugt `dashboard.html` |
 | `affiliate_dashboard/adapters/` | `gsheet` / `csv` / `s3` (+ `base.py`) |
 | `affiliate_dashboard/seo/` | SEO-Monitoring: `google_auth.py`, `gsc_client.py`, `ga4_client.py`, `seranking_client.py`, `seo_store.py`, `seo_run.py` |
-| `affiliate_dashboard/seo/` (Rechercheagent) | `seranking_pages_sync.py` (Seiten-Discovery), `cannibalization.py`, `seranking_keyword_research.py`, `research_agent.py`, `research_store.py` (Mehr-Nischen-Audits + Dialog, `data/research.db`) |
+| `affiliate_dashboard/seo/` (Rechercheagent) | `seranking_pages_sync.py` (Seiten-Discovery), `cannibalization.py`, `seranking_keyword_research.py`, `seranking_csv_import.py` (CSV-Alternative zur Live-API), `research_agent.py`, `research_store.py` (Mehr-Nischen-Audits + Dialog, `data/research.db`) |
 | `affiliate_dashboard/products/` | Produkt-Lebenszyklus: `catalog_reader.py`, `ga4_traffic.py`, `site_crawler.py`, `store.py`, `products_run.py` |
 | `affiliate_dashboard/gsheet_fetch.py` | Gemeinsame CSV-Fetch-Mechanik (Umsatz-Import + Produkt-Katalog-Tabs) |
 | `affiliate_dashboard/server.py` | Flask-App fuer den Live-Betrieb (`/`, `/api/sync`, `/settings`, `/api/seo/events`, `/api/seo/research`, `/api/products`, `/api/products/status`) |
