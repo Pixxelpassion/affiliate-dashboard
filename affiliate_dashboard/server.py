@@ -329,9 +329,6 @@ body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--p
 .topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,#09adbe 100%)}
 header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
 header img.logo{height:46px;width:auto}
-header .titles{line-height:1.15}
-header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
-header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
 {{ nav_css|safe }}
 main{padding:1.4rem 2rem 3rem;max-width:900px;margin:0 auto}
@@ -364,16 +361,7 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
 .msg .sources{margin-top:.6rem;font-size:.78rem;color:var(--pp-muted)}
 .msg .sources a{color:var(--pp-muted)}
 </style></head><body>
-<div class="topbar"></div>
-<header>
-  <img class="logo" src="{{ logo }}" alt="Pixxelpassion">
-  <div class="titles">
-    <h1>Recherche</h1>
-    <div class="sub">Affiliate-Dashboard</div>
-  </div>
-  <div class="spacer"></div>
-  {{ nav|safe }}
-</header>
+{{ header|safe }}
 <main>
 
 <form method="get" action="/recherche">
@@ -523,8 +511,8 @@ def recherche_page():
         pages=pages, audits=audits, audit_id=audit_id, messages=messages,
         run_status=run_status, csv_imports=csv_imports, csv_errors=csv_errors,
         running=_is_research_project_running(project_id) if project_id else False,
-        favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
-        nav_css=branding.NAV_CSS, nav=branding.render_nav("/recherche"),
+        favicon=branding.FAVICON_LINK, nav_css=branding.NAV_CSS,
+        header=branding.render_header("/recherche"),
     )
 
 
@@ -661,9 +649,6 @@ body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--p
 .topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,#09adbe 100%)}
 header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
 header img.logo{height:46px;width:auto}
-header .titles{line-height:1.15}
-header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
-header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
 {{ nav_css|safe }}
 main{padding:1.4rem 2rem 3rem;max-width:900px;margin:0 auto}
@@ -693,17 +678,13 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
 .article-body table{width:auto}
 .review-box{margin-top:1rem;font-size:.88rem}
 .review-box ul{margin:.3rem 0 .6rem;padding-left:1.3rem}
+.dropzone{position:relative;border:2px dashed var(--pp-border);border-radius:8px;padding:1.2rem;text-align:center;background:var(--pp-bg);margin-top:.4rem;transition:border-color .15s,background .15s}
+.dropzone.dragover{border-color:var(--pp-green);background:color-mix(in srgb,var(--pp-green) 10%,var(--pp-bg))}
+.dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.dropzone .dz-hint{color:var(--pp-muted);font-size:.85rem;pointer-events:none}
+.dropzone .dz-files{margin-top:.4rem;font-size:.82rem;color:var(--pp-ink);font-weight:600;pointer-events:none}
 </style></head><body>
-<div class="topbar"></div>
-<header>
-  <img class="logo" src="{{ logo }}" alt="Pixxelpassion">
-  <div class="titles">
-    <h1>Content-Erstellung</h1>
-    <div class="sub">Affiliate-Dashboard</div>
-  </div>
-  <div class="spacer"></div>
-  {{ nav|safe }}
-</header>
+{{ header|safe }}
 <main>
 
 <form method="get" action="/content">
@@ -737,10 +718,54 @@ korrekt eintragen (z.B. den Namen eines bereits angelegten Ordners) oder den Ord
 <h2>Neuer Testartikel ({{ tab.label }})</h2>
 <form method="post" action="/content/{{ tab.label }}/new" enctype="multipart/form-data">
   <label>Produktname <input type="text" name="product_name" placeholder="z.B. Bosch GTS 10 XC"></label>
-  <label>Produktfotos (erstes Bild = Keyvisual) <input type="file" name="images" accept="image/*" multiple></label>
-  <label>Bedienungsanleitung als PDF (optional) <input type="file" name="manual_pdf" accept="application/pdf"></label>
+
+  <label>Produktfotos (erstes Bild = Keyvisual)</label>
+  <div class="dropzone" id="dz-images">
+    <input type="file" id="images-input" name="images" accept="image/*" multiple>
+    <div class="dz-hint">Dateien hierher ziehen oder klicken zum Auswählen</div>
+    <div class="dz-files" id="dz-images-files"></div>
+  </div>
+
+  <label>Bedienungsanleitung als PDF (optional)</label>
+  <div class="dropzone" id="dz-pdf">
+    <input type="file" id="pdf-input" name="manual_pdf" accept="application/pdf">
+    <div class="dz-hint">Datei hierher ziehen oder klicken zum Auswählen</div>
+    <div class="dz-files" id="dz-pdf-files"></div>
+  </div>
+
   <button type="submit">Artikel erzeugen</button>
 </form>
+
+<script>
+function setupDropzone(zoneId, inputId, filesId) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const filesEl = document.getElementById(filesId);
+  function updateFiles() {
+    filesEl.textContent = input.files.length
+      ? Array.from(input.files).map(f => f.name).join(', ') : '';
+  }
+  input.addEventListener('change', updateFiles);
+  zone.addEventListener('dragover', function (e) { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', function () { zone.classList.remove('dragover'); });
+  zone.addEventListener('drop', function (e) {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const dropped = e.dataTransfer.files;
+    if (!dropped.length) return;
+    if (input.multiple) {
+      input.files = dropped;
+    } else {
+      const dt = new DataTransfer();
+      dt.items.add(dropped[0]);
+      input.files = dt.files;
+    }
+    updateFiles();
+  });
+}
+setupDropzone('dz-images', 'images-input', 'dz-images-files');
+setupDropzone('dz-pdf', 'pdf-input', 'dz-pdf-files');
+</script>
 
 <h2>Bisherige Artikel</h2>
 {% if not items %}
@@ -831,8 +856,8 @@ def content_page():
         _CONTENT_TEMPLATE, product_tabs=product_tabs, tracking_id=tracking_id, tab=tab,
         items=items, item_id=item_id, item=item, gemini_configured=gemini_configured,
         knowledge_slug=knowledge_slug, knowledge_exists=knowledge_exists,
-        favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
-        nav_css=branding.NAV_CSS, nav=branding.render_nav("/content"),
+        favicon=branding.FAVICON_LINK, nav_css=branding.NAV_CSS,
+        header=branding.render_header("/content"),
     )
 
 
@@ -983,9 +1008,6 @@ body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--p
 .topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,#09adbe 100%)}
 header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
 header img.logo{height:46px;width:auto}
-header .titles{line-height:1.15}
-header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
-header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
 {{ nav_css|safe }}
 main{padding:1.4rem 2rem 3rem;max-width:760px;margin:0 auto}
@@ -1002,16 +1024,7 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
 .small-btn:hover{background:var(--pp-card);border-color:var(--pp-neg,#b82105);color:#b82105}
 .flash{background:color-mix(in srgb,var(--pp-green) 18%,var(--pp-card));border:1px solid var(--pp-green);padding:.6rem 1rem;border-radius:5px;margin-bottom:1rem}
 </style></head><body>
-<div class="topbar"></div>
-<header>
-  <img class="logo" src="{{ logo }}" alt="Pixxelpassion">
-  <div class="titles">
-    <h1>Einstellungen</h1>
-    <div class="sub">Affiliate-Dashboard</div>
-  </div>
-  <div class="spacer"></div>
-  {{ nav|safe }}
-</header>
+{{ header|safe }}
 <main>
 {% if saved %}<div class="flash">Gespeichert.</div>{% endif %}
 
@@ -1176,8 +1189,8 @@ def settings_page():
                                    research_projects=research_projects,
                                    last_research=last_research,
                                    saved=request.args.get("saved"),
-                                   favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
-                                   nav_css=branding.NAV_CSS, nav=branding.render_nav("/settings"))
+                                   favicon=branding.FAVICON_LINK, nav_css=branding.NAV_CSS,
+                                   header=branding.render_header("/settings"))
 
 
 @app.route("/settings", methods=["POST"])

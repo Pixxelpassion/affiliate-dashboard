@@ -222,14 +222,11 @@ def build_html(monthly, *, source, marketplace, currency, seo=None, products=Non
         "totalRevenue": total_revenue,
     }
     payload = _payload(monthly, meta, seo, products)
+    stand_html = f'<div class="stand">Stand: {meta["generated"]}<br>Zeitraum: {meta["period"]} · Quelle: {source}</div>'
     html = _TEMPLATE.replace("@@PAYLOAD@@", _json(payload))
-    html = html.replace("@@LOGO@@", branding.logo_data_uri())
     html = html.replace("@@FAVICON@@", branding.FAVICON_LINK)
     html = html.replace("@@NAV_CSS@@", branding.NAV_CSS)
-    html = html.replace("@@NAV@@", branding.render_nav("/"))
-    html = html.replace("@@GENERATED@@", meta["generated"])
-    html = html.replace("@@PERIOD@@", meta["period"])
-    html = html.replace("@@SOURCE@@", source)
+    html = html.replace("@@HEADER@@", branding.render_header("/", extra_html=stand_html))
     return html
 
 
@@ -257,9 +254,6 @@ body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--p
 .topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,var(--pp-teal) 100%)}
 header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
 header img.logo{height:46px;width:auto}
-header .titles{line-height:1.15}
-header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
-header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
 header .stand{color:var(--pp-muted);font-size:.78rem;text-align:right}
 @@NAV_CSS@@
@@ -348,17 +342,7 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
 </style>
 </head>
 <body>
-<div class="topbar"></div>
-<header>
-  <img class="logo" src="@@LOGO@@" alt="Pixxelpassion">
-  <div class="titles">
-    <h1>Affiliate-Einnahmen</h1>
-    <div class="sub">Amazon PartnerNet · Monat × Tracking-ID</div>
-  </div>
-  <div class="spacer"></div>
-  @@NAV@@
-  <div class="stand">Stand: @@GENERATED@@<br>Zeitraum: @@PERIOD@@ · Quelle: @@SOURCE@@</div>
-</header>
+@@HEADER@@
 
 <main>
   <div class="filterbar">

@@ -44,6 +44,25 @@ def render_nav(active: str) -> str:
     ]
     return '<nav class="nav">' + "".join(links) + "</nav>"
 
+
+def render_header(active: str, extra_html: str = "") -> str:
+    """Kompletter ``<header>``-Block (Topbar + Logo + Nav, OHNE Titel-Text -- der
+    hervorgehobene Nav-Link zeigt bereits, wo man ist). ``extra_html`` haengt
+    optionalen Seiteninhalt nach der Nav an (z. B. den Sync-Stand auf Analytics).
+    Nutzt bereits aufgeloeste Werte (``logo_data_uri()``), ist also per direktem
+    Python-Aufruf sowohl in ``render.py``s String-Ersetzung als auch in Flask/Jinja
+    einsetzbar -- EIN Aufrufer, EINE Ausgabe, kein Auseinanderlaufen mehr moeglich."""
+    return (
+        '<div class="topbar"></div>\n'
+        "<header>\n"
+        f'  <img class="logo" src="{logo_data_uri()}" alt="Pixxelpassion">\n'
+        '  <div class="spacer"></div>\n'
+        f"  {render_nav(active)}\n"
+        f"  {extra_html}\n"
+        "</header>"
+    )
+
+
 _LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo_pixxelpassion.webp"
 
 FAVICON_LINK = (
