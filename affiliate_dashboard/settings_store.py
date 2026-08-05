@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS product_tabs (
     label           TEXT NOT NULL,
     gid             TEXT NOT NULL,
     ga4_property_id TEXT,
-    site_base_url   TEXT
+    site_base_url   TEXT,
+    wp_username     TEXT,
+    wp_app_password TEXT
 );
 
 CREATE TABLE IF NOT EXISTS research_projects (
@@ -88,6 +90,17 @@ class SettingsStore:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        self.conn.commit()
+        self._migrate_product_tabs_wp_columns()
+
+    def _migrate_product_tabs_wp_columns(self) -> None:
+        """``CREATE TABLE IF NOT EXISTS`` legt bei bereits bestehenden Datenbanken keine
+        neuen Spalten nach -- fuer bestehende ``product_tabs``-Zeilen (vor Einfuehrung
+        von WordPress-Zugangsdaten) per ``ALTER TABLE`` nachruesten."""
+        existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(product_tabs)")}
+        for column in ("wp_username", "wp_app_password"):
+            if column not in existing:
+                self.conn.execute(f"ALTER TABLE product_tabs ADD COLUMN {column} TEXT")
         self.conn.commit()
 
     def close(self) -> None:
@@ -140,16 +153,28 @@ class SettingsStore:
     # --- Produkt-Tabs (Produkt-Lebenszyklus-Tab) -------------------------------
     def list_product_tabs(self) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, label, gid, ga4_property_id, site_base_url FROM product_tabs ORDER BY id"
+            """SELECT id, label, gid, ga4_property_id, site_base_url, wp_username, wp_app_password
+               FROM product_tabs ORDER BY id"""
         ).fetchall()
         return [dict(r) for r in rows]
 
     def add_product_tab(self, label: str, gid: str, ga4_property_id: str = "",
-                        site_base_url: str = "") -> None:
+                        site_base_url: str = "", wp_username: str = "",
+                        wp_app_password: str = "") -> None:
         self.conn.execute(
-            """INSERT INTO product_tabs (label, gid, ga4_property_id, site_base_url)
-               VALUES (?, ?, ?, ?)""",
-            (label.strip(), gid.strip(), ga4_property_id.strip(), site_base_url.strip()),
+            """INSERT INTO product_tabs
+               (label, gid, ga4_property_id, site_base_url, wp_username, wp_app_password)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (label.strip(), gid.strip(), ga4_property_id.strip(), site_base_url.strip(),
+             wp_username.strip(), wp_app_password.strip()),
+        )
+        self.conn.commit()
+
+    def update_product_tab_wp_credentials(self, tab_id: int, wp_username: str,
+                                           wp_app_password: str) -> None:
+        self.conn.execute(
+            "UPDATE product_tabs SET wp_username = ?, wp_app_password = ? WHERE id = ?",
+            (wp_username.strip(), wp_app_password.strip(), tab_id),
         )
         self.conn.commit()
 

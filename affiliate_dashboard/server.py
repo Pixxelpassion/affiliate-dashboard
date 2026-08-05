@@ -22,11 +22,15 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_from_directory
 from werkzeug.security import check_password_hash
+from werkzeug.utils import secure_filename
 
 from . import branding
 from .config import BASE_DIR, Config
 from .run import run_once
 from .settings_store import SettingsStore
+from .content import article_generator
+from .content.content_store import ContentStore
+from .content.pipeline import run_content_item
 from .products import ga4_traffic
 from .products.products_run import merge_items
 from .products.store import ProductStore
@@ -45,6 +49,8 @@ app = Flask(__name__)
 
 _SETTINGS_DB = BASE_DIR / "data" / "settings.db"
 _RESEARCH_DB = BASE_DIR / "data" / "research.db"
+_CONTENT_DB = BASE_DIR / "data" / "content.db"
+_CONTENT_UPLOADS_DIR = BASE_DIR / "data" / "content_uploads"
 _SYNC_LOCK_PATH = BASE_DIR / "data" / "sync.lock"
 _RESEARCH_LOCK_PATH = BASE_DIR / "data" / "research.lock"
 _RESEARCH_PROJECT_LOCK_DIR = BASE_DIR / "data"
@@ -159,6 +165,10 @@ def _store() -> SettingsStore:
 
 def _research_store() -> ResearchStore:
     return ResearchStore(_RESEARCH_DB)
+
+
+def _content_store() -> ContentStore:
+    return ContentStore(_CONTENT_DB)
 
 
 def _cfg() -> Config:
@@ -355,7 +365,8 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     <div class="sub">Affiliate-Dashboard</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/">← Reporting &amp; Analyse</a>
+  <a class="nav-link" href="/">← Analytics</a>
+  <a class="nav-link" href="/content">Content-Erstellung</a>
   <a class="nav-link" href="/settings">⚙ Einstellungen</a>
 </header>
 <main>
@@ -624,6 +635,234 @@ def recherche_upload_csv(project_id: int, kind: str):
     return redirect(f"/recherche?project={project_id}")
 
 
+# --- Content-Erstellung (Testartikel-Generator, siehe Plan "Content-Erstellung") ------
+# Eigener Navigationsbereich, kein Tab im generierten dashboard.html -- analog zu
+# /recherche. Jeder Upload erzeugt eine neue, unabhaengige content_items-Zeile,
+# deshalb ist KEIN Lock noetig (anders als bei /recherche/run).
+
+_CONTENT_TEMPLATE = """
+<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Content-Erstellung – Affiliate-Dashboard</title>
+{{ favicon|safe }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--pp-green:#b7cb3a;--pp-green-dark:#717e21;--pp-ink:#1A202C;--pp-muted:#6b7280;--pp-bg:#fbfbfb;--pp-card:#ffffff;--pp-border:#e6e8e1;--body-font:'Poppins','Segoe UI',system-ui,sans-serif;--head-font:'Montserrat','Poppins','Segoe UI',sans-serif}
+*{box-sizing:border-box}
+body{font-family:var(--body-font);margin:0;background:var(--pp-bg);color:var(--pp-ink);-webkit-font-smoothing:antialiased}
+.topbar{height:6px;background:linear-gradient(90deg,var(--pp-green) 0%,var(--pp-green-dark) 60%,#09adbe 100%)}
+header{display:flex;align-items:center;gap:1.1rem;padding:1.1rem 2rem;background:var(--pp-card);border-bottom:1px solid var(--pp-border);flex-wrap:wrap}
+header img.logo{height:46px;width:auto}
+header .titles{line-height:1.15}
+header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
+header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
+header .spacer{flex:1}
+header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
+header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+main{padding:1.4rem 2rem 3rem;max-width:900px;margin:0 auto}
+h2{font-family:var(--head-font);font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--pp-border);padding-bottom:.3rem}
+label{display:block;margin-top:.9rem;font-size:.85rem;color:var(--pp-muted)}
+input[type=text]{width:100%;padding:.5rem .65rem;border:1px solid var(--pp-border);border-radius:5px;font-size:.95rem;margin-top:.25rem;font-family:var(--body-font);color:var(--pp-ink)}
+input:focus{outline:2px solid color-mix(in srgb,var(--pp-green) 55%,transparent);border-color:var(--pp-green)}
+select{padding:.5rem .65rem;border:1px solid var(--pp-border);border-radius:5px;font-size:.95rem;font-family:var(--body-font);color:var(--pp-ink)}
+button{font-family:var(--body-font);margin-top:1.2rem;padding:.5rem 1.1rem;border-radius:5px;border:none;background:var(--pp-green);color:#fff;font-weight:500;font-size:.9rem;cursor:pointer}
+button:hover{background:var(--pp-green-dark)}
+table{width:100%;border-collapse:collapse;margin-top:.6rem;font-size:.88rem}
+td,th{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--pp-border)}
+th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
+.flash{background:color-mix(in srgb,var(--pp-green) 18%,var(--pp-card));border:1px solid var(--pp-green);padding:.6rem 1rem;border-radius:5px;margin-bottom:1rem}
+.flash.error{background:color-mix(in srgb,#b82105 12%,var(--pp-card));border-color:#b82105}
+.item-list{list-style:none;padding:0;margin:.6rem 0}
+.item-list li{margin-bottom:.3rem}
+.item-list a{text-decoration:none;color:var(--pp-ink);border:1px solid var(--pp-border);border-radius:5px;padding:.35rem .7rem;display:inline-block;font-size:.85rem}
+.item-list a.active{border-color:var(--pp-green);background:color-mix(in srgb,var(--pp-green) 14%,var(--pp-card))}
+.badge{display:inline-block;border-radius:4px;padding:.1rem .5rem;font-size:.72rem;font-weight:600;margin-left:.4rem}
+.badge.done{background:color-mix(in srgb,var(--pp-green) 25%,var(--pp-card));color:var(--pp-green-dark)}
+.badge.processing,.badge.pending{background:color-mix(in srgb,#09adbe 20%,var(--pp-card));color:#09adbe}
+.badge.error{background:color-mix(in srgb,#b82105 15%,var(--pp-card));color:#b82105}
+.article-preview{border:1px solid var(--pp-border);border-radius:8px;padding:1rem 1.2rem;margin-top:1rem;background:var(--pp-card)}
+.article-preview .meta-row{font-size:.82rem;color:var(--pp-muted);margin-bottom:.3rem}
+.article-body{border:1px solid var(--pp-border);border-radius:6px;padding:.8rem 1rem;margin-top:.6rem;max-height:420px;overflow:auto;font-size:.9rem;line-height:1.5}
+.article-body table{width:auto}
+.review-box{margin-top:1rem;font-size:.88rem}
+.review-box ul{margin:.3rem 0 .6rem;padding-left:1.3rem}
+</style></head><body>
+<div class="topbar"></div>
+<header>
+  <img class="logo" src="{{ logo }}" alt="Pixxelpassion">
+  <div class="titles">
+    <h1>Content-Erstellung</h1>
+    <div class="sub">Affiliate-Dashboard</div>
+  </div>
+  <div class="spacer"></div>
+  <a class="nav-link" href="/">← Analytics</a>
+  <a class="nav-link" href="/recherche">Recherche</a>
+  <a class="nav-link" href="/settings">⚙ Einstellungen</a>
+</header>
+<main>
+
+<form method="get" action="/content">
+  <label>Tracking-ID <select name="tracking_id" onchange="this.form.submit()">
+    {% for t in product_tabs %}
+    <option value="{{ t.label }}" {{ 'selected' if t.label == tracking_id else '' }}>{{ t.label }}</option>
+    {% endfor %}
+  </select></label>
+  <noscript><button type="submit">Anzeigen</button></noscript>
+</form>
+
+{% if not product_tabs %}
+<p>Noch kein Produkt-Tab angelegt. Unter <a href="/settings">Einstellungen</a> im
+Abschnitt „Produkt-Tabs" einen anlegen (definiert Website/WordPress-Ziel je Nische).</p>
+{% elif tab %}
+
+{% if not gemini_configured %}
+<div class="flash error">Kein Gemini-API-Key hinterlegt (<a href="/settings">Einstellungen</a> → SEO-Rechercheagent).</div>
+{% endif %}
+{% if not tab.wp_username %}
+<div class="flash error">Kein WordPress-Anwendungspasswort fuer „{{ tab.label }}" hinterlegt
+(<a href="/settings">Einstellungen</a> → Produkt-Tabs).</div>
+{% endif %}
+
+<h2>Neuer Testartikel ({{ tab.label }})</h2>
+<form method="post" action="/content/{{ tab.label }}/new" enctype="multipart/form-data">
+  <label>Produktname <input type="text" name="product_name" placeholder="z.B. Bosch GTS 10 XC"></label>
+  <label>Produktfotos (erstes Bild = Keyvisual) <input type="file" name="images" accept="image/*" multiple></label>
+  <label>Bedienungsanleitung als PDF (optional) <input type="file" name="manual_pdf" accept="application/pdf"></label>
+  <button type="submit">Artikel erzeugen</button>
+</form>
+
+<h2>Bisherige Artikel</h2>
+{% if not items %}
+<p>Noch kein Artikel fuer diese Tracking-ID erzeugt.</p>
+{% else %}
+<ul class="item-list">
+  {% for it in items %}
+  <li><a class="{{ 'active' if it.id == item_id else '' }}" href="/content?tracking_id={{ tab.label }}&amp;item={{ it.id }}">{{ it.product_name }}</a>
+    <span class="badge {{ it.status }}">{{ it.status }}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if item %}
+<h2>{{ item.product_name }}</h2>
+{% if item.status == 'error' %}
+<div class="flash error">Fehlgeschlagen: {{ item.error_message }}
+  {% if item.article %} (Artikel wurde dennoch erzeugt, siehe unten -- Fehler trat erst beim WordPress-Upload auf. Inhalte koennen manuell uebernommen werden.){% endif %}
+</div>
+{% elif item.status in ('pending', 'processing') %}
+<p>Wird erzeugt… (Seite neu laden, um den Status zu aktualisieren)</p>
+{% endif %}
+{% if item.article %}
+<div class="article-preview">
+  <div class="meta-row"><strong>Titel:</strong> {{ item.article.title }}</div>
+  <div class="meta-row"><strong>Meta-Title:</strong> {{ item.article.meta_title }}</div>
+  <div class="meta-row"><strong>Meta-Description:</strong> {{ item.article.meta_description }}</div>
+  <div class="meta-row"><strong>Focus-Keyword:</strong> {{ item.article.focus_keyword }}</div>
+  {% if item.wp_edit_link %}
+  <div class="meta-row"><strong>WordPress-Entwurf:</strong> <a href="{{ item.wp_edit_link }}" target="_blank" rel="noopener">Im WP-Editor öffnen</a></div>
+  {% endif %}
+
+  <div class="review-box">
+    <strong>Bewertungsbox-Vorschlag (manuell ins Review-Plugin übertragen):</strong>
+    Gesamt {{ item.article.review_box.overall_score }}/10
+    <ul>
+      {% for s in item.article.review_box.sub_scores %}<li>{{ s.category }}: {{ s.score }}/10</li>{% endfor %}
+    </ul>
+    <strong>Pro:</strong>
+    <ul>{% for p in item.article.review_box.pro %}<li>{{ p }}</li>{% endfor %}</ul>
+    <strong>Kontra:</strong>
+    <ul>{% for k in item.article.review_box.kontra %}<li>{{ k }}</li>{% endfor %}</ul>
+  </div>
+
+  <div class="article-body">{{ item.article.body_html|safe }}</div>
+
+  {% if item.article.sources %}
+  <div class="meta-row" style="margin-top:.6rem">Recherche-Quellen:
+    {% for s in item.article.sources %}<a href="{{ s.uri }}" target="_blank" rel="noopener">{{ s.title or s.domain or s.uri }}</a>{{ ', ' if not loop.last else '' }}{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+
+{% endif %}
+</main>
+</body></html>
+"""
+
+
+@app.route("/content", methods=["GET"])
+def content_page():
+    tracking_id = request.args.get("tracking_id")
+    item_id = request.args.get("item", type=int)
+
+    with _store() as store:
+        product_tabs = store.list_product_tabs()
+        if tracking_id is None and product_tabs:
+            tracking_id = product_tabs[0]["label"]
+        tab = next((t for t in product_tabs if t["label"] == tracking_id), None)
+        gemini_configured = bool(store.get_setting("gemini_api_key"))
+
+    items = []
+    item = None
+    if tab:
+        slug = article_generator.slugify_tracking_id(tab["label"])
+        with _content_store() as cstore:
+            items = cstore.list_items(slug)
+            if item_id:
+                item = cstore.get_item(item_id)
+
+    return render_template_string(
+        _CONTENT_TEMPLATE, product_tabs=product_tabs, tracking_id=tracking_id, tab=tab,
+        items=items, item_id=item_id, item=item, gemini_configured=gemini_configured,
+        favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
+    )
+
+
+@app.route("/content/<tracking_id>/new", methods=["POST"])
+def content_new_item(tracking_id: str):
+    product_name = request.form.get("product_name", "").strip()
+    images = [f for f in request.files.getlist("images") if f and f.filename]
+    manual_pdf = request.files.get("manual_pdf")
+
+    with _store() as store:
+        tab = next((t for t in store.list_product_tabs() if t["label"] == tracking_id), None)
+        gemini_api_key = store.get_setting("gemini_api_key", "")
+
+    if not tab or not product_name or not images:
+        return redirect(f"/content?tracking_id={tracking_id}")
+
+    slug = article_generator.slugify_tracking_id(tab["label"])
+    with _content_store() as cstore:
+        item_id = cstore.create_item(slug, product_name)
+
+        upload_dir = _CONTENT_UPLOADS_DIR / str(item_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        for idx, image in enumerate(images):
+            filename = f"raw-{idx}-{secure_filename(image.filename)}"
+            path = upload_dir / filename
+            image.save(path)
+            cstore.add_file(item_id, "image_raw", str(path))
+
+        if manual_pdf and manual_pdf.filename:
+            path = upload_dir / f"manual-{secure_filename(manual_pdf.filename)}"
+            manual_pdf.save(path)
+            cstore.add_file(item_id, "manual_pdf", str(path))
+
+    threading.Thread(
+        target=run_content_item,
+        args=(item_id, _CONTENT_DB, slug, tab["site_base_url"] or "",
+              tab["wp_username"] or "", tab["wp_app_password"] or "", gemini_api_key),
+        daemon=True,
+    ).start()
+
+    return redirect(f"/content?tracking_id={tracking_id}&item={item_id}")
+
+
 # --- SEO-Events-API (ersetzt die fruehere localStorage-Loesung) ------------------
 
 @app.route("/api/seo/events", methods=["GET"])
@@ -758,8 +997,9 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     <div class="sub">Affiliate-Dashboard</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/">← Reporting &amp; Analyse</a>
+  <a class="nav-link" href="/">← Analytics</a>
   <a class="nav-link" href="/recherche">Recherche</a>
+  <a class="nav-link" href="/content">Content-Erstellung</a>
 </header>
 <main>
 {% if saved %}<div class="flash">Gespeichert.</div>{% endif %}
@@ -859,16 +1099,26 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
 
 <h2>Produkt-Tabs (ein Google-Sheet-Tab je Nische)</h2>
 <table>
-  <tr><th>Label</th><th>gid</th><th>GA4-Property-ID</th><th>Website</th><th></th></tr>
+  <tr><th>Label</th><th>gid</th><th>GA4-Property-ID</th><th>Website</th><th>WordPress</th><th></th></tr>
   {% for t in product_tabs %}
   <tr>
     <td>{{ t.label }}</td>
     <td>{{ t.gid }}</td>
     <td>{{ t.ga4_property_id }}</td>
     <td>{{ t.site_base_url }}</td>
+    <td>{{ 'verbunden (' + t.wp_username + ')' if t.wp_username else 'nicht eingerichtet' }}</td>
     <td><form method="post" action="/settings/product-tabs/{{ t.id }}/delete" style="margin:0">
       <button type="submit" class="small-btn">Löschen</button>
     </form></td>
+  </tr>
+  <tr>
+    <td colspan="6" style="border-bottom:2px solid var(--pp-border)">
+      <form method="post" action="/settings/product-tabs/{{ t.id }}/wp-credentials" style="display:flex;gap:.6rem;align-items:flex-end;margin:.3rem 0">
+        <label style="margin:0;flex:1">WP-Benutzername <input type="text" name="wp_username" value="{{ t.wp_username or '' }}"></label>
+        <label style="margin:0;flex:1">WP-Anwendungspasswort <input type="password" name="wp_app_password" value="{{ t.wp_app_password or '' }}"></label>
+        <button type="submit" class="small-btn" style="margin:0">Speichern</button>
+      </form>
+    </td>
   </tr>
   {% endfor %}
 </table>
@@ -877,9 +1127,12 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
   <label>Label (Nische) <input type="text" name="label" placeholder="Tauchpumpen"></label>
   <label>Sheet-Tab-ID (gid) <input type="text" name="gid" placeholder="342635093"></label>
   <label>GA4-Property-ID (optional, sonst SEO-Property) <input type="text" name="ga4_property_id" placeholder="properties/123456789"></label>
-  <label>Website-Basis-URL (für den Crawler) <input type="text" name="site_base_url" placeholder="https://tauchpumpe-tests.de"></label>
+  <label>Website-Basis-URL (auch WordPress-URL fuer die Content-Erstellung) <input type="text" name="site_base_url" placeholder="https://tauchpumpe-tests.de"></label>
   <button type="submit">Tab hinzufügen</button>
 </form>
+<p style="font-size:.82rem;color:var(--pp-muted)">WordPress-Zugangsdaten (Anwendungspasswort:
+WP-Admin → Benutzer → Profil → Anwendungspasswörter) werden je Tab direkt in der Tabelle oben
+gepflegt, nicht im Hinzufügen-Formular.</p>
 
 <h2>Manueller Sync</h2>
 <form method="post" action="/api/sync-form">
@@ -971,6 +1224,15 @@ def settings_add_product_tab():
 def settings_delete_product_tab(tab_id: int):
     with _store() as store:
         store.delete_product_tab(tab_id)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/product-tabs/<int:tab_id>/wp-credentials", methods=["POST"])
+def settings_update_product_tab_wp(tab_id: int):
+    wp_username = request.form.get("wp_username", "").strip()
+    wp_app_password = request.form.get("wp_app_password", "").strip()
+    with _store() as store:
+        store.update_product_tab_wp_credentials(tab_id, wp_username, wp_app_password)
     return redirect("/settings?saved=1")
 
 

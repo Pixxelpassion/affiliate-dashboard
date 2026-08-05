@@ -356,6 +356,7 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
   </div>
   <div class="spacer"></div>
   <a class="nav-link" href="/recherche">Recherche</a>
+  <a class="nav-link" href="/content">Content-Erstellung</a>
   <a class="nav-link" href="/settings">⚙ Einstellungen</a>
   <div class="stand">Stand: @@GENERATED@@<br>Zeitraum: @@PERIOD@@ · Quelle: @@SOURCE@@</div>
 </header>

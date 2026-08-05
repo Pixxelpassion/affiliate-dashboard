@@ -18,9 +18,9 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from google import genai
 from google.genai import types as genai_types
 
+from .. import gemini_client
 from ..config import BASE_DIR, Config
 from ..settings_store import SettingsStore
 from . import (
@@ -229,16 +229,6 @@ Datenquelle im Digest fehlt/None ist, sag das explizit statt eine Aussage zu erf
 """
 
 
-_GEMINI_MODEL = "gemini-pro-latest"  # rollierender Alias -- bewusst keine feste Versionsnummer
-
-# Ohne explizites Timeout wartet der google-genai-Client per Default UNBEGRENZT
-# (HttpOptions().timeout ist None) -- bei einem Netzwerk-Haenger blockiert das den
-# Hintergrund-Thread (und damit den Projekt-Lock) unbegrenzt, ohne je einen Fehler zu
-# werfen. Deshalb hartes Timeout in Millisekunden (echter Vorfall: Live-Server hing
-# 30+ Minuten fest, Lock blieb belegt, keine Fehlermeldung).
-_GEMINI_TIMEOUT_MS = 180_000
-
-
 def build_report(cfg: Config, digest: dict) -> str:
     api_key = cfg.get("seo", {}).get("gemini", {}).get("api_key")
     if not api_key:
@@ -246,16 +236,10 @@ def build_report(cfg: Config, digest: dict) -> str:
             "Kein Gemini-API-Key konfiguriert (seo.gemini.api_key) -- "
             "in /settings unter 'SEO-Rechercheagent' eintragen."
         )
-    client = genai.Client(api_key=api_key, http_options=genai_types.HttpOptions(timeout=_GEMINI_TIMEOUT_MS))
-    response = client.models.generate_content(
-        model=_GEMINI_MODEL,
-        contents=json.dumps(digest, ensure_ascii=False),
-        config=genai_types.GenerateContentConfig(
-            system_instruction=_REPORT_SYSTEM_PROMPT,
-            max_output_tokens=16000,
-        ),
+    text, _sources = gemini_client.generate(
+        json.dumps(digest, ensure_ascii=False), _REPORT_SYSTEM_PROMPT, api_key,
     )
-    return response.text
+    return text
 
 
 # --- Orchestrierung ---------------------------------------------------------------
@@ -482,46 +466,9 @@ im Digest stehen oder durch eine eigene Suche belegt sind.
 """
 
 
-def _extract_sources(response) -> list[dict]:
-    """Grounding-Quellen aus einer Gemini-Antwort extrahieren (leer, wenn das Modell
-    das Search-Tool fuer diese Antwort nicht genutzt hat)."""
-    sources = []
-    try:
-        grounding = response.candidates[0].grounding_metadata
-        for chunk in (grounding.grounding_chunks or []) if grounding else []:
-            if chunk.web:
-                sources.append({"title": chunk.web.title, "uri": chunk.web.uri,
-                                 "domain": chunk.web.domain})
-    except (AttributeError, IndexError):
-        pass
-    return sources
-
-
-def _generate_with_search(contents, system_instruction: str, api_key: str,
-                           max_output_tokens: int = 16000) -> tuple[str, list[dict]]:
-    """Ein generate_content()-Call MIT Google-Search-Grounding-Tool -- bewusste, auf
-    diesen einen Zweck begrenzte Ausnahme von der sonstigen "kein Tool-Use fuers
-    Modell"-Architektur: Wettbewerberkontext laesst sich nicht vorab deterministisch
-    enumerieren (im Gegensatz zu den eigenen GSC/GA4/SE-Ranking-Zahlen).
-
-    Explizites Timeout (siehe ``_GEMINI_TIMEOUT_MS``) -- ohne das haengt ein
-    Netzwerk-Problem den Hintergrund-Thread samt Projekt-Lock unbegrenzt fest."""
-    client = genai.Client(api_key=api_key, http_options=genai_types.HttpOptions(timeout=_GEMINI_TIMEOUT_MS))
-    response = client.models.generate_content(
-        model=_GEMINI_MODEL,
-        contents=contents,
-        config=genai_types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            max_output_tokens=max_output_tokens,
-            tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
-        ),
-    )
-    return response.text, _extract_sources(response)
-
-
 def generate_audit_report(digest: dict, api_key: str) -> tuple[str, list[dict]]:
-    return _generate_with_search(json.dumps(digest, ensure_ascii=False),
-                                  _PROJECT_AUDIT_SYSTEM_PROMPT, api_key)
+    return gemini_client.generate(json.dumps(digest, ensure_ascii=False),
+                                   _PROJECT_AUDIT_SYSTEM_PROMPT, api_key, search=True)
 
 
 def generate_dialog_reply(digest: dict, messages: list[dict], api_key: str) -> tuple[str, list[dict]]:
@@ -533,7 +480,7 @@ def generate_dialog_reply(digest: dict, messages: list[dict], api_key: str) -> t
     for m in messages:
         role = "model" if m["role"] == "assistant" else "user"
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=m["content"])]))
-    return _generate_with_search(contents, _DIALOG_SYSTEM_PROMPT, api_key)
+    return gemini_client.generate(contents, _DIALOG_SYSTEM_PROMPT, api_key, search=True)
 
 
 def start_project_audit(project: dict, settings_store: SettingsStore, research_store,

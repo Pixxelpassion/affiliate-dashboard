@@ -1,0 +1,62 @@
+"""WordPress-REST-Client (Basic Auth mit Application Password).
+
+Nutzt nur die Python-Standardbibliothek (``urllib``), wie der Rest des Projekts.
+Medien-Upload nutzt den von der WP-REST-API dokumentierten Weg fuer rohe Bytes
+(``Content-Disposition``-Header statt multipart/form-data) -- einfacher als ein
+manuell gebautes multipart-Encoding.
+
+Kein RankMath-Meta-Write in dieser Iteration (siehe Plan): RankMath gibt seine
+SEO-Felder standardmaessig nicht fuer die REST-API frei.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+
+def _auth_header(username: str, app_password: str) -> str:
+    token = base64.b64encode(f"{username}:{app_password}".encode("utf-8")).decode("ascii")
+    return f"Basic {token}"
+
+
+def _request(url: str, username: str, app_password: str, *, method: str = "GET",
+             data: bytes | None = None, headers: dict | None = None, timeout: int = 60) -> dict:
+    all_headers = {"Authorization": _auth_header(username, app_password)}
+    all_headers.update(headers or {})
+    req = Request(url, data=data, headers=all_headers, method=method)
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"WordPress-API-Fehler {exc.code} bei {url}: {body}") from exc
+
+
+def upload_media(wp_url: str, username: str, app_password: str, image_bytes: bytes,
+                  filename: str, mime_type: str = "image/webp") -> int:
+    """Laedt ein Bild in die WordPress-Mediathek hoch, gibt die Medien-ID zurueck."""
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
+    headers = {
+        "Content-Type": mime_type,
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+    result = _request(url, username, app_password, method="POST", data=image_bytes, headers=headers)
+    return result["id"]
+
+
+def create_draft_post(wp_url: str, username: str, app_password: str, title: str,
+                       body_html: str, featured_media_id: int | None = None) -> dict:
+    """Legt einen Entwurf an. Gibt ``{"id": ..., "edit_link": ...}`` zurueck."""
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
+    payload = {"title": title, "content": body_html, "status": "draft"}
+    if featured_media_id is not None:
+        payload["featured_media"] = featured_media_id
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    result = _request(url, username, app_password, method="POST", data=data, headers=headers)
+    post_id = result["id"]
+    edit_link = f"{wp_url.rstrip('/')}/wp-admin/post.php?post={post_id}&action=edit"
+    return {"id": post_id, "edit_link": edit_link}

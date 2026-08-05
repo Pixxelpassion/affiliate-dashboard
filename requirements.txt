@@ -29,3 +29,8 @@ gunicorn>=22.0                   # WSGI-Server fuer den Produktivbetrieb (nicht 
 # kein eigenes Paket. Nutzt Gemini statt Claude, um mit nur einem Zugangsdaten-
 # Anbieter (Google) auszukommen -- GSC/GA4 laufen bereits ueber Google-OAuth.
 google-genai>=1.0                # Ein Completion-Call je Analyse-Lauf, kein Tool-Use
+
+# Nur fuer die Content-Erstellung (affiliate_dashboard/content/):
+Pillow>=10.0                     # Bild-Zuschnitt/-Resize (image_processor.py)
+pypdf>=4.0                        # PDF-Textextraktion (pdf_extractor.py)
+PyYAML>=6.0                       # YAML-Frontmatter in knowledge/*.md parsen
