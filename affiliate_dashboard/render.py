@@ -225,6 +225,8 @@ def build_html(monthly, *, source, marketplace, currency, seo=None, products=Non
     html = _TEMPLATE.replace("@@PAYLOAD@@", _json(payload))
     html = html.replace("@@LOGO@@", branding.logo_data_uri())
     html = html.replace("@@FAVICON@@", branding.FAVICON_LINK)
+    html = html.replace("@@NAV_CSS@@", branding.NAV_CSS)
+    html = html.replace("@@NAV@@", branding.render_nav("/"))
     html = html.replace("@@GENERATED@@", meta["generated"])
     html = html.replace("@@PERIOD@@", meta["period"])
     html = html.replace("@@SOURCE@@", source)
@@ -260,8 +262,7 @@ header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0
 header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
 header .stand{color:var(--pp-muted);font-size:.78rem;text-align:right}
-header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
-header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+@@NAV_CSS@@
 main{padding:1.4rem 2rem 2.5rem;max-width:1290px;margin:0 auto}
 .filterbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;background:linear-gradient(90deg,color-mix(in srgb,var(--pp-green) 16%,var(--pp-card)),var(--pp-card) 70%);border:1px solid color-mix(in srgb,var(--pp-green) 40%,var(--pp-border));border-left:6px solid var(--pp-green);border-radius:14px;padding:.85rem 1.15rem;margin-bottom:1.2rem}
 .filterbar .bigctl{font-family:var(--head-font);font-weight:700;font-size:1.02rem;display:flex;align-items:center;gap:.6rem;color:var(--pp-ink)}
@@ -355,9 +356,7 @@ footer{color:var(--pp-muted);font-size:.75rem;text-align:center;padding:1rem}
     <div class="sub">Amazon PartnerNet · Monat × Tracking-ID</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/recherche">Recherche</a>
-  <a class="nav-link" href="/content">Content-Erstellung</a>
-  <a class="nav-link" href="/settings">⚙ Einstellungen</a>
+  @@NAV@@
   <div class="stand">Stand: @@GENERATED@@<br>Zeitraum: @@PERIOD@@ · Quelle: @@SOURCE@@</div>
 </header>
 

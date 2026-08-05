@@ -325,8 +325,7 @@ header .titles{line-height:1.15}
 header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
 header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
-header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
-header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+{{ nav_css|safe }}
 main{padding:1.4rem 2rem 3rem;max-width:900px;margin:0 auto}
 h2{font-family:var(--head-font);font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--pp-border);padding-bottom:.3rem}
 label{display:block;margin-top:.9rem;font-size:.85rem;color:var(--pp-muted)}
@@ -365,9 +364,7 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     <div class="sub">Affiliate-Dashboard</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/">← Analytics</a>
-  <a class="nav-link" href="/content">Content-Erstellung</a>
-  <a class="nav-link" href="/settings">⚙ Einstellungen</a>
+  {{ nav|safe }}
 </header>
 <main>
 
@@ -519,6 +516,7 @@ def recherche_page():
         run_status=run_status, csv_imports=csv_imports, csv_errors=csv_errors,
         running=_is_research_project_running(project_id) if project_id else False,
         favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
+        nav_css=branding.NAV_CSS, nav=branding.render_nav("/recherche"),
     )
 
 
@@ -659,8 +657,7 @@ header .titles{line-height:1.15}
 header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
 header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
-header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
-header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+{{ nav_css|safe }}
 main{padding:1.4rem 2rem 3rem;max-width:900px;margin:0 auto}
 h2{font-family:var(--head-font);font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--pp-border);padding-bottom:.3rem}
 label{display:block;margin-top:.9rem;font-size:.85rem;color:var(--pp-muted)}
@@ -697,9 +694,7 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     <div class="sub">Affiliate-Dashboard</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/">← Analytics</a>
-  <a class="nav-link" href="/recherche">Recherche</a>
-  <a class="nav-link" href="/settings">⚙ Einstellungen</a>
+  {{ nav|safe }}
 </header>
 <main>
 
@@ -819,6 +814,7 @@ def content_page():
         _CONTENT_TEMPLATE, product_tabs=product_tabs, tracking_id=tracking_id, tab=tab,
         items=items, item_id=item_id, item=item, gemini_configured=gemini_configured,
         favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
+        nav_css=branding.NAV_CSS, nav=branding.render_nav("/content"),
     )
 
 
@@ -973,8 +969,7 @@ header .titles{line-height:1.15}
 header h1{font-family:var(--head-font);font-weight:800;font-size:1.4rem;margin:0;letter-spacing:.2px}
 header .sub{color:var(--pp-muted);font-size:.82rem;margin-top:.15rem}
 header .spacer{flex:1}
-header .nav-link{color:var(--pp-muted);font-size:.8rem;text-decoration:none;border:1px solid var(--pp-border);border-radius:5px;padding:.4rem .8rem;white-space:nowrap}
-header .nav-link:hover{color:var(--pp-green-dark);border-color:var(--pp-green)}
+{{ nav_css|safe }}
 main{padding:1.4rem 2rem 3rem;max-width:760px;margin:0 auto}
 h2{font-family:var(--head-font);font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--pp-border);padding-bottom:.3rem}
 label{display:block;margin-top:.9rem;font-size:.85rem;color:var(--pp-muted)}
@@ -997,9 +992,7 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     <div class="sub">Affiliate-Dashboard</div>
   </div>
   <div class="spacer"></div>
-  <a class="nav-link" href="/">← Analytics</a>
-  <a class="nav-link" href="/recherche">Recherche</a>
-  <a class="nav-link" href="/content">Content-Erstellung</a>
+  {{ nav|safe }}
 </header>
 <main>
 {% if saved %}<div class="flash">Gespeichert.</div>{% endif %}
@@ -1156,7 +1149,8 @@ def settings_page():
                                    research_projects=research_projects,
                                    last_research=last_research,
                                    saved=request.args.get("saved"),
-                                   favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri())
+                                   favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
+                                   nav_css=branding.NAV_CSS, nav=branding.render_nav("/settings"))
 
 
 @app.route("/settings", methods=["POST"])

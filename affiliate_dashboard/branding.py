@@ -1,15 +1,48 @@
-"""Gemeinsame Marken-Bausteine (Logo, Favicon) fuer dashboard.html (render.py)
-und die /settings-Seite (server.py) -- eine Quelle, damit beide nicht
-auseinanderlaufen.
+"""Gemeinsame Marken-Bausteine (Logo, Favicon, Header-Navigation) fuer dashboard.html
+(render.py) und alle Flask-Seiten (server.py) -- EINE Quelle, damit die vier Bereiche
+(Analytics/Recherche/Content-Erstellung/Einstellungen) nirgends auseinanderlaufen.
 
 Favicon ist identisch zum Nachbarprojekt parqet-dashboard uebernommen
-(Konsistenz ueber beide Pixxelpassion-Tools hinweg).
+(Konsistenz ueber beide Pixxelpassion-Tools hinweg). Nav-Styling (schlichte Textlinks,
+aktive Seite in Akzentgruen mit Unterstrich statt Button-Rahmen) orientiert sich am
+echten Header auf pixxelpassion.de (Astra-Theme, "header-navigation-style-underline") --
+dessen Farben #b7cb3a/#717e21 entsprechen bereits exakt unseren bestehenden
+--pp-green/--pp-green-dark-Variablen.
 """
 
 from __future__ import annotations
 
 import base64
 from pathlib import Path
+
+# Reihenfolge + Label + Ziel-URL der vier Navigationsbereiche -- einzige Stelle, die das
+# festlegt. Jede Seite bindet render_nav() mit ihrer eigenen URL als `active` ein, damit
+# ueberall exakt dieselben vier Links in derselben Reihenfolge erscheinen (auch der
+# Eigenlink, nur optisch als aktiv markiert -- wie "Home" im echten Pixxelpassion-Header).
+NAV_ITEMS = [
+    ("Analytics", "/"),
+    ("Recherche", "/recherche"),
+    ("Content-Erstellung", "/content"),
+    ("Einstellungen", "/settings"),
+]
+
+NAV_CSS = """
+header .nav{display:flex;gap:1.6rem;align-items:center}
+header .nav-link{color:var(--pp-ink);font-size:.92rem;text-decoration:none;padding:.2rem 0;border-bottom:2px solid transparent;white-space:nowrap}
+header .nav-link:hover{color:var(--pp-green-dark)}
+header .nav-link.active{color:var(--pp-green-dark);font-weight:600;border-bottom-color:var(--pp-green)}
+"""
+
+
+def render_nav(active: str) -> str:
+    """Gibt die Navigationslinks als HTML zurueck. ``active`` ist die URL der
+    aktuellen Seite (z. B. ``/recherche``) -- deren Link wird optisch hervorgehoben,
+    bleibt aber (anders als die bisherige Loesung) als Link sichtbar."""
+    links = [
+        f'<a class="nav-link{" active" if href == active else ""}" href="{href}">{label}</a>'
+        for label, href in NAV_ITEMS
+    ]
+    return '<nav class="nav">' + "".join(links) + "</nav>"
 
 _LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo_pixxelpassion.webp"
 
