@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS product_tabs (
     ga4_property_id TEXT,
     site_base_url   TEXT,
     wp_username     TEXT,
-    wp_app_password TEXT
+    wp_app_password TEXT,
+    knowledge_slug  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS research_projects (
@@ -98,7 +99,7 @@ class SettingsStore:
         neuen Spalten nach -- fuer bestehende ``product_tabs``-Zeilen (vor Einfuehrung
         von WordPress-Zugangsdaten) per ``ALTER TABLE`` nachruesten."""
         existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(product_tabs)")}
-        for column in ("wp_username", "wp_app_password"):
+        for column in ("wp_username", "wp_app_password", "knowledge_slug"):
             if column not in existing:
                 self.conn.execute(f"ALTER TABLE product_tabs ADD COLUMN {column} TEXT")
         self.conn.commit()
@@ -153,7 +154,8 @@ class SettingsStore:
     # --- Produkt-Tabs (Produkt-Lebenszyklus-Tab) -------------------------------
     def list_product_tabs(self) -> list[dict]:
         rows = self.conn.execute(
-            """SELECT id, label, gid, ga4_property_id, site_base_url, wp_username, wp_app_password
+            """SELECT id, label, gid, ga4_property_id, site_base_url, wp_username,
+                      wp_app_password, knowledge_slug
                FROM product_tabs ORDER BY id"""
         ).fetchall()
         return [dict(r) for r in rows]
@@ -175,6 +177,16 @@ class SettingsStore:
         self.conn.execute(
             "UPDATE product_tabs SET wp_username = ?, wp_app_password = ? WHERE id = ?",
             (wp_username.strip(), wp_app_password.strip(), tab_id),
+        )
+        self.conn.commit()
+
+    def update_product_tab_knowledge_slug(self, tab_id: int, knowledge_slug: str) -> None:
+        """``label`` ist meist die echte Amazon-Tracking-ID (z. B. ``tischkreissaege0a-21``),
+        nicht der sprechende Name des Wissensbasis-Ordners unter ``content/knowledge/`` --
+        dieses Feld entkoppelt beides explizit statt es aus dem Label abzuleiten."""
+        self.conn.execute(
+            "UPDATE product_tabs SET knowledge_slug = ? WHERE id = ?",
+            (knowledge_slug.strip(), tab_id),
         )
         self.conn.commit()
 

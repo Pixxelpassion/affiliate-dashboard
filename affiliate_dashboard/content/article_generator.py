@@ -87,6 +87,13 @@ def slugify_tracking_id(label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
 
 
+def knowledge_exists(tracking_id: str) -> bool:
+    """Prueft, ob der Wissensbasis-Ordner fuer diesen Slug tatsaechlich existiert --
+    zum Anzeigen einer klaren Warnung in der UI, bevor der Hintergrund-Lauf mit einem
+    kryptischen ``FileNotFoundError`` scheitert."""
+    return (_KNOWLEDGE_ROOT / tracking_id / "structure_rules.md").exists()
+
+
 def load_knowledge(tracking_id: str) -> dict:
     """Liest Struktur-Regeln/Ton-of-Voice/Beispielartikel aus
     ``knowledge/<tracking_id>/`` (siehe CLAUDE.md-Analogie: eine Nische = ein Ordner)."""

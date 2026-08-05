@@ -171,6 +171,14 @@ def _content_store() -> ContentStore:
     return ContentStore(_CONTENT_DB)
 
 
+def _knowledge_slug(tab: dict) -> str:
+    """``label`` ist meist die echte Amazon-Tracking-ID (z. B. ``tischkreissaege0a-21``),
+    kein sprechender Nischen-Name -- ``knowledge_slug`` (manuell in /settings gepflegt)
+    hat deshalb Vorrang; nur wenn leer, wird aus dem Label abgeleitet (Fallback fuer
+    sprechende Labels wie "Tischkreissägen")."""
+    return (tab.get("knowledge_slug") or "").strip() or article_generator.slugify_tracking_id(tab["label"])
+
+
 def _cfg() -> Config:
     with _store() as store:
         return Config.from_settings_store(store)
@@ -719,6 +727,12 @@ Abschnitt „Produkt-Tabs" einen anlegen (definiert Website/WordPress-Ziel je Ni
 <div class="flash error">Kein WordPress-Anwendungspasswort fuer „{{ tab.label }}" hinterlegt
 (<a href="/settings">Einstellungen</a> → Produkt-Tabs).</div>
 {% endif %}
+{% if not knowledge_exists %}
+<div class="flash error">Wissensbasis-Ordner „content/knowledge/{{ knowledge_slug }}/" existiert nicht.
+Unter <a href="/settings">Einstellungen</a> → Produkt-Tabs bei „{{ tab.label }}" den Wissensbasis-Ordner
+korrekt eintragen (z.B. den Namen eines bereits angelegten Ordners) oder den Ordner anlegen.</div>
+{% endif %}
+<p style="font-size:.78rem;color:var(--pp-muted)">Wissensbasis-Ordner: <code>{{ knowledge_slug }}</code></p>
 
 <h2>Neuer Testartikel ({{ tab.label }})</h2>
 <form method="post" action="/content/{{ tab.label }}/new" enctype="multipart/form-data">
@@ -803,16 +817,20 @@ def content_page():
 
     items = []
     item = None
+    knowledge_slug = None
+    knowledge_exists = True
     if tab:
-        slug = article_generator.slugify_tracking_id(tab["label"])
+        knowledge_slug = _knowledge_slug(tab)
+        knowledge_exists = article_generator.knowledge_exists(knowledge_slug)
         with _content_store() as cstore:
-            items = cstore.list_items(slug)
+            items = cstore.list_items(knowledge_slug)
             if item_id:
                 item = cstore.get_item(item_id)
 
     return render_template_string(
         _CONTENT_TEMPLATE, product_tabs=product_tabs, tracking_id=tracking_id, tab=tab,
         items=items, item_id=item_id, item=item, gemini_configured=gemini_configured,
+        knowledge_slug=knowledge_slug, knowledge_exists=knowledge_exists,
         favicon=branding.FAVICON_LINK, logo=branding.logo_data_uri(),
         nav_css=branding.NAV_CSS, nav=branding.render_nav("/content"),
     )
@@ -831,7 +849,7 @@ def content_new_item(tracking_id: str):
     if not tab or not product_name or not images:
         return redirect(f"/content?tracking_id={tracking_id}")
 
-    slug = article_generator.slugify_tracking_id(tab["label"])
+    slug = _knowledge_slug(tab)
     with _content_store() as cstore:
         item_id = cstore.create_item(slug, product_name)
 
@@ -1105,10 +1123,19 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
     </form></td>
   </tr>
   <tr>
-    <td colspan="6" style="border-bottom:2px solid var(--pp-border)">
+    <td colspan="6" style="border-bottom:1px solid var(--pp-border)">
       <form method="post" action="/settings/product-tabs/{{ t.id }}/wp-credentials" style="display:flex;gap:.6rem;align-items:flex-end;margin:.3rem 0">
         <label style="margin:0;flex:1">WP-Benutzername <input type="text" name="wp_username" value="{{ t.wp_username or '' }}"></label>
         <label style="margin:0;flex:1">WP-Anwendungspasswort <input type="password" name="wp_app_password" value="{{ t.wp_app_password or '' }}"></label>
+        <button type="submit" class="small-btn" style="margin:0">Speichern</button>
+      </form>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="6" style="border-bottom:2px solid var(--pp-border)">
+      <form method="post" action="/settings/product-tabs/{{ t.id }}/knowledge-slug" style="display:flex;gap:.6rem;align-items:flex-end;margin:.3rem 0">
+        <label style="margin:0;flex:1">Wissensbasis-Ordner (content/knowledge/&lt;slug&gt;/ -- z.B. "tischkreissaegen"; leer = aus Label abgeleitet)
+          <input type="text" name="knowledge_slug" value="{{ t.knowledge_slug or '' }}" placeholder="tischkreissaegen"></label>
         <button type="submit" class="small-btn" style="margin:0">Speichern</button>
       </form>
     </td>
@@ -1227,6 +1254,14 @@ def settings_update_product_tab_wp(tab_id: int):
     wp_app_password = request.form.get("wp_app_password", "").strip()
     with _store() as store:
         store.update_product_tab_wp_credentials(tab_id, wp_username, wp_app_password)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/product-tabs/<int:tab_id>/knowledge-slug", methods=["POST"])
+def settings_update_product_tab_knowledge_slug(tab_id: int):
+    knowledge_slug = request.form.get("knowledge_slug", "").strip()
+    with _store() as store:
+        store.update_product_tab_knowledge_slug(tab_id, knowledge_slug)
     return redirect("/settings?saved=1")
 
 
