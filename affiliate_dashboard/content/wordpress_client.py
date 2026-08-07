@@ -12,6 +12,7 @@ SEO-Felder standardmaessig nicht fuer die REST-API frei.
 from __future__ import annotations
 
 import base64
+import html
 import json
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -57,15 +58,33 @@ def test_connection(wp_url: str, username: str, app_password: str) -> dict:
 
 
 def upload_media(wp_url: str, username: str, app_password: str, image_bytes: bytes,
-                  filename: str, mime_type: str = "image/webp") -> int:
-    """Laedt ein Bild in die WordPress-Mediathek hoch, gibt die Medien-ID zurueck."""
+                  filename: str, mime_type: str = "image/webp") -> dict:
+    """Laedt ein Bild in die WordPress-Mediathek hoch. Gibt ``{"id", "source_url"}``
+    zurueck -- ``source_url`` wird fuer die inline Bild-Einbettung in ``body_html``
+    gebraucht (siehe ``build_image_block_html``)."""
     url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
     headers = {
         "Content-Type": mime_type,
         "Content-Disposition": f'attachment; filename="{filename}"',
     }
     result = _request(url, username, app_password, method="POST", data=image_bytes, headers=headers)
-    return result["id"]
+    return {"id": result["id"], "source_url": result.get("source_url", "")}
+
+
+def build_image_block_html(media_id: int, source_url: str, alt_text: str, caption: str) -> str:
+    """Baut einen Gutenberg-Bild-Block (dieselbe Markup-Form, die der WordPress-
+    Block-Editor selbst erzeugt) -- damit das eingebettete Bild im Editor als
+    normaler, bearbeitbarer Bild-Block erscheint, nicht nur als rohes ``<img>``."""
+    alt = html.escape(alt_text or "", quote=True)
+    cap = html.escape(caption or "")
+    figcaption = f'<figcaption class="wp-element-caption">{cap}</figcaption>' if cap else ""
+    return (
+        f'\n<!-- wp:image {{"id":{media_id},"sizeSlug":"large"}} -->\n'
+        f'<figure class="wp-block-image size-large">'
+        f'<img src="{source_url}" alt="{alt}" class="wp-image-{media_id}"/>'
+        f'{figcaption}</figure>\n'
+        f'<!-- /wp:image -->\n'
+    )
 
 
 def update_media_metadata(wp_url: str, username: str, app_password: str, media_id: int, *,

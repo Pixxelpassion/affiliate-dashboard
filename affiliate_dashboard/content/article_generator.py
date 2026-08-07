@@ -178,6 +178,14 @@ es ist ein anderes Produkt)
 3. body_html: vollstaendiges HTML (h2/h3-Ueberschriften, Absaetze, die Technische-Daten-
    Tabelle als echte <table>, Listen wo passend) -- KEIN <h1> (der Titel wird separat als
    "title" ausgegeben), KEIN Markdown, reines HTML.
+   BILD-PLATZIERUNG: Bild-Index 0 ist das Keyvisual und wird separat als Beitragsbild
+   gesetzt -- dafuer NIEMALS einen Platzhalter setzen. Fuer JEDES weitere Bild (Index 1,2,...)
+   entscheide anhand des Bildinhalts, zu welchem Abschnitt es inhaltlich am besten passt
+   (z. B. ein Foto der Anschluesse gehoert in den Anschluesse-Abschnitt), und setze dort GENAU
+   EINEN Platzhalter der Form [[BILD:<Index>]] als eigene Zeile zwischen zwei Absaetzen (nicht
+   mitten im Satz). Jeder Platzhalter-Index darf nur genau einmal im gesamten body_html
+   vorkommen. Schreibe NIEMALS eigene <img>-Tags oder Bild-URLs selbst -- nur diese
+   Platzhalter, die Bild-Einbindung uebernimmt der Code danach.
 4. meta_title (<= 60 Zeichen) und meta_description (<= 155 Zeichen) fuer RankMath (werden
    manuell eingetragen, nicht automatisch per API), focus_keyword als wichtigstes Ziel-Keyword.
 5. review_box: Gesamt-Score (0-10), Einzel-Scores passend zu den in der Artikelstruktur

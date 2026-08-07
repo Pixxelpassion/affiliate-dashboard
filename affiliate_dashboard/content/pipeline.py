@@ -7,10 +7,44 @@ einem haengenden Zustand (Lehre aus dem Gemini-Timeout-Vorfall, siehe
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import article_generator, image_processor, pdf_extractor, wordpress_client
 from .content_store import ContentStore
+
+_PLACEHOLDER_RE = re.compile(r"\[\[BILD:(\d+)\]\]")
+
+
+def _place_gallery_images(body_html: str, media_by_index: dict, crops_by_index: dict) -> str:
+    """Ersetzt von Gemini gesetzte ``[[BILD:<Index>]]``-Platzhalter durch echte
+    Gutenberg-Bild-Bloecke (Keyvisual/Index 0 ausgenommen -- das wird separat als
+    Beitragsbild gesetzt, nie inline eingebettet). Bilder, fuer die Gemini KEINEN
+    Platzhalter gesetzt hat (oder ein falscher/doppelter Index vorkam), werden ans
+    Ende angehaengt, statt sie stillschweigend verloren gehen zu lassen."""
+    placed = set()
+
+    def _replace(match: "re.Match") -> str:
+        idx = int(match.group(1))
+        media = media_by_index.get(idx)
+        if idx == 0 or media is None or idx in placed:
+            return ""
+        placed.add(idx)
+        crop = crops_by_index.get(idx, {})
+        return wordpress_client.build_image_block_html(
+            media["id"], media["source_url"], crop.get("alt_text", ""), crop.get("caption", ""),
+        )
+
+    body_html = _PLACEHOLDER_RE.sub(_replace, body_html)
+
+    for idx, media in media_by_index.items():
+        if idx == 0 or idx in placed:
+            continue
+        crop = crops_by_index.get(idx, {})
+        body_html += wordpress_client.build_image_block_html(
+            media["id"], media["source_url"], crop.get("alt_text", ""), crop.get("caption", ""),
+        )
+    return body_html
 
 
 def run_content_item(item_id: int, content_db_path, tracking_id: str, site_base_url: str,
@@ -38,7 +72,7 @@ def run_content_item(item_id: int, content_db_path, tracking_id: str, site_base_
             crops_by_index = {c["index"]: c for c in article.get("image_crops", [])}
             img_format = spec.get("format", "webp")
 
-            media_ids = []
+            media_by_index = {}
             for idx, raw in enumerate(raw_images):
                 crop = crops_by_index.get(idx, {})
                 focus_x = crop.get("focus_x", 0.5)
@@ -57,18 +91,19 @@ def run_content_item(item_id: int, content_db_path, tracking_id: str, site_base_
                 cropped_path.write_bytes(cropped)
                 store.add_file(item_id, "image_cropped", str(cropped_path))
 
-                media_id = wordpress_client.upload_media(
+                media = wordpress_client.upload_media(
                     site_base_url, wp_username, wp_app_password, cropped, filename,
                     mime_type=f"image/{img_format}",
                 )
-                media_ids.append(media_id)
+                media_by_index[idx] = media
                 wordpress_client.update_media_metadata(
-                    site_base_url, wp_username, wp_app_password, media_id,
+                    site_base_url, wp_username, wp_app_password, media["id"],
                     title=crop.get("title"), alt_text=crop.get("alt_text"),
                     caption=crop.get("caption"), description=crop.get("description"),
                 )
 
-            featured_media_id = media_ids[0] if media_ids else None
+            featured_media_id = media_by_index.get(0, {}).get("id")
+            article["body_html"] = _place_gallery_images(article["body_html"], media_by_index, crops_by_index)
             post = wordpress_client.create_draft_post(
                 site_base_url, wp_username, wp_app_password,
                 article["title"], article["body_html"], featured_media_id,
