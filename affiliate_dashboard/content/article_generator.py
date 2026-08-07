@@ -58,8 +58,13 @@ _RESPONSE_SCHEMA = {
                     "index": {"type": "integer"},
                     "focus_x": {"type": "number"},
                     "focus_y": {"type": "number"},
+                    "title": {"type": "string"},
+                    "alt_text": {"type": "string"},
+                    "caption": {"type": "string"},
+                    "description": {"type": "string"},
                 },
-                "required": ["index", "focus_x", "focus_y"],
+                "required": ["index", "focus_x", "focus_y", "title", "alt_text",
+                             "caption", "description"],
             },
         },
     },
@@ -117,6 +122,14 @@ def load_knowledge(tracking_id: str) -> dict:
     }
 
 
+def _load_global_knowledge_file(filename: str) -> str:
+    """Liest eine nischenuebergreifende Wissensdatei direkt unter ``knowledge/``
+    (z. B. ``image_metadata_rules.md``) -- analog zu ``image_spec.md`` in
+    ``image_processor.py``, das ebenfalls global statt pro Nische gilt."""
+    _, body = _read_md(_KNOWLEDGE_ROOT / filename)
+    return body
+
+
 def build_context(product_name: str, tracking_id: str, site_base_url: str,
                    manual_text: str, num_images: int) -> dict:
     knowledge = load_knowledge(tracking_id)
@@ -126,6 +139,7 @@ def build_context(product_name: str, tracking_id: str, site_base_url: str,
         "site_base_url": site_base_url,
         "manual_text": manual_text,
         "num_images": num_images,
+        "image_metadata_rules": _load_global_knowledge_file("image_metadata_rules.md"),
         **knowledge,
     }
 
@@ -150,6 +164,9 @@ exakt im Stil und in der Struktur der folgenden Vorgaben.
 es ist ein anderes Produkt)
 {examples_text}
 
+# Bild-Metadaten-Regelwerk (gilt fuer image_crops.title/alt_text/caption/description)
+{context['image_metadata_rules']}
+
 # Deine Aufgabe
 1. Nutze die Google-Suche, um auf der Herstellerwebseite zusaetzliche technische
    Spezifikationen zu finden (falls sie aus der Anleitung unten fehlen), und um echte
@@ -169,6 +186,11 @@ es ist ein anderes Produkt)
 6. image_crops: fuer JEDES der {context['num_images']} als Bild-Input uebergebenen Fotos
    (Reihenfolge = Index ab 0) den normierten Mittelpunkt (x,y, je 0-1) des interessanten
    Produkt-Motivs -- NICHT die Bildmitte, da die Fotos teils nicht zentriert aufgenommen sind.
+   ZUSAETZLICH pro Bild title/alt_text/caption/description GENAU nach dem Bild-Metadaten-
+   Regelwerk oben -- schau dir das jeweilige Bild dafuer genau an (was ist wirklich zu sehen?),
+   erfinde keine Details, die nicht erkennbar sind. alt_text und caption duerfen sich NIE
+   wortgleich entsprechen (siehe Regelwerk: alt_text = objektive Bildbeschreibung,
+   caption = redaktioneller Satz im Ton-of-Voice der Nische).
 """
 
 

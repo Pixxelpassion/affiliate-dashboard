@@ -821,6 +821,18 @@ setupDropzone('dz-pdf', 'pdf-input', 'dz-pdf-files');
 
   <div class="article-body">{{ item.article.body_html|safe }}</div>
 
+  {% if item.article.image_crops %}
+  <div class="review-box">
+    <strong>Bild-Metadaten (bereits in WordPress gesetzt, hier nur zur Kontrolle):</strong>
+    <table>
+      <tr><th>#</th><th>Titel</th><th>Alt-Text</th><th>Beschriftung</th></tr>
+      {% for c in item.article.image_crops|sort(attribute='index') %}
+      <tr><td>{{ c.index }}</td><td>{{ c.title }}</td><td>{{ c.alt_text }}</td><td>{{ c.caption }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
   {% if item.article.sources %}
   <div class="meta-row" style="margin-top:.6rem">Recherche-Quellen:
     {% for s in item.article.sources %}<a href="{{ s.uri }}" target="_blank" rel="noopener">{{ s.title or s.domain or s.uri }}</a>{{ ', ' if not loop.last else '' }}{% endfor %}

@@ -62,6 +62,11 @@ def run_content_item(item_id: int, content_db_path, tracking_id: str, site_base_
                     mime_type=f"image/{img_format}",
                 )
                 media_ids.append(media_id)
+                wordpress_client.update_media_metadata(
+                    site_base_url, wp_username, wp_app_password, media_id,
+                    title=crop.get("title"), alt_text=crop.get("alt_text"),
+                    caption=crop.get("caption"), description=crop.get("description"),
+                )
 
             featured_media_id = media_ids[0] if media_ids else None
             post = wordpress_client.create_draft_post(

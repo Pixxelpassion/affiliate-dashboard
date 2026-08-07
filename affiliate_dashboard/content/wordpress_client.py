@@ -68,6 +68,31 @@ def upload_media(wp_url: str, username: str, app_password: str, image_bytes: byt
     return result["id"]
 
 
+def update_media_metadata(wp_url: str, username: str, app_password: str, media_id: int, *,
+                           title: str | None = None, alt_text: str | None = None,
+                           caption: str | None = None, description: str | None = None) -> None:
+    """Setzt Titel/Alt-Text/Beschriftung/Beschreibung eines bereits hochgeladenen
+    Mediums nachtraeglich (zweiter Aufruf, da der Roh-Byte-Upload in ``upload_media()``
+    keine zusaetzlichen Felder in derselben Anfrage transportieren kann -- der
+    REST-Standard-Weg dafuer ist ein Update per ID, derselbe Mechanismus wie beim
+    Aktualisieren eines Beitrags)."""
+    payload = {}
+    if title is not None:
+        payload["title"] = title
+    if alt_text is not None:
+        payload["alt_text"] = alt_text
+    if caption is not None:
+        payload["caption"] = caption
+    if description is not None:
+        payload["description"] = description
+    if not payload:
+        return
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media/{media_id}"
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    _request(url, username, app_password, method="POST", data=data, headers=headers)
+
+
 def create_draft_post(wp_url: str, username: str, app_password: str, title: str,
                        body_html: str, featured_media_id: int | None = None) -> dict:
     """Legt einen Entwurf an. Gibt ``{"id": ..., "edit_link": ...}`` zurueck."""
