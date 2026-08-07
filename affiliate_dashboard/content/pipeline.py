@@ -107,6 +107,9 @@ def run_content_item(item_id: int, content_db_path, tracking_id: str, site_base_
             post = wordpress_client.create_draft_post(
                 site_base_url, wp_username, wp_app_password,
                 article["title"], article["body_html"], featured_media_id,
+                rank_math_title=article.get("meta_title"),
+                rank_math_description=article.get("meta_description"),
+                rank_math_focus_keyword=article.get("focus_keyword"),
             )
             store.set_result(item_id, article, post["id"], post["edit_link"])
         except Exception as exc:  # noqa: BLE001

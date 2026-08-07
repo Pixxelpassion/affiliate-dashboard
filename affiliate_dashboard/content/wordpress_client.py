@@ -5,8 +5,11 @@ Medien-Upload nutzt den von der WP-REST-API dokumentierten Weg fuer rohe Bytes
 (``Content-Disposition``-Header statt multipart/form-data) -- einfacher als ein
 manuell gebautes multipart-Encoding.
 
-Kein RankMath-Meta-Write in dieser Iteration (siehe Plan): RankMath gibt seine
-SEO-Felder standardmaessig nicht fuer die REST-API frei.
+RankMath gibt seine SEO-Felder (rank_math_title/_description/_focus_keyword)
+standardmaessig NICHT fuer die REST-API frei -- ``create_draft_post()`` versucht sie
+trotzdem immer zu setzen; ohne den noetigen ``register_post_meta()``-Code-Schnipsel
+auf der WordPress-Seite ignoriert WordPress unbekannte Meta-Keys einfach lautlos
+(kein Fehler, nur ohne Wirkung).
 """
 
 from __future__ import annotations
@@ -113,12 +116,28 @@ def update_media_metadata(wp_url: str, username: str, app_password: str, media_i
 
 
 def create_draft_post(wp_url: str, username: str, app_password: str, title: str,
-                       body_html: str, featured_media_id: int | None = None) -> dict:
-    """Legt einen Entwurf an. Gibt ``{"id": ..., "edit_link": ...}`` zurueck."""
+                       body_html: str, featured_media_id: int | None = None, *,
+                       rank_math_title: str | None = None,
+                       rank_math_description: str | None = None,
+                       rank_math_focus_keyword: str | None = None) -> dict:
+    """Legt einen Entwurf an. Gibt ``{"id": ..., "edit_link": ...}`` zurueck.
+
+    Die drei ``rank_math_*``-Parameter werden immer als ``meta`` mitgeschickt --
+    ohne den REST-Freischalt-Schnipsel auf der WordPress-Seite (siehe Moduldoc)
+    ignoriert WordPress sie einfach, mit Schnipsel setzt RankMath sie automatisch."""
     url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
     payload = {"title": title, "content": body_html, "status": "draft"}
     if featured_media_id is not None:
         payload["featured_media"] = featured_media_id
+    meta = {}
+    if rank_math_title is not None:
+        meta["rank_math_title"] = rank_math_title
+    if rank_math_description is not None:
+        meta["rank_math_description"] = rank_math_description
+    if rank_math_focus_keyword is not None:
+        meta["rank_math_focus_keyword"] = rank_math_focus_keyword
+    if meta:
+        payload["meta"] = meta
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     result = _request(url, username, app_password, method="POST", data=data, headers=headers)

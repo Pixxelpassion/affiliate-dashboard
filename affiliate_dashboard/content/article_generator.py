@@ -187,7 +187,8 @@ es ist ein anderes Produkt)
    vorkommen. Schreibe NIEMALS eigene <img>-Tags oder Bild-URLs selbst -- nur diese
    Platzhalter, die Bild-Einbindung uebernimmt der Code danach.
 4. meta_title (<= 60 Zeichen) und meta_description (<= 155 Zeichen) fuer RankMath (werden
-   manuell eingetragen, nicht automatisch per API), focus_keyword als wichtigstes Ziel-Keyword.
+   automatisch als rank_math_title/rank_math_description gesetzt), focus_keyword als
+   wichtigstes Ziel-Keyword (wird als rank_math_focus_keyword gesetzt).
 5. review_box: Gesamt-Score (0-10), Einzel-Scores passend zu den in der Artikelstruktur
    genannten Kategorien, sowie Pro-/Kontra-Stichpunkte -- wird manuell ins Bewertungs-Plugin
    uebertragen, nicht automatisch gesetzt.
