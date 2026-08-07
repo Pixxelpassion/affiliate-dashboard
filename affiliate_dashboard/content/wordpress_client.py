@@ -35,6 +35,27 @@ def _request(url: str, username: str, app_password: str, *, method: str = "GET",
         raise RuntimeError(f"WordPress-API-Fehler {exc.code} bei {url}: {body}") from exc
 
 
+def test_connection(wp_url: str, username: str, app_password: str) -> dict:
+    """Fragt ``/wp/v2/users/me`` ab (erfordert gueltige Auth) -- zur Diagnose von
+    401-Fehlern: unterscheidet zwischen "Zugangsdaten greifen gar nicht" (Anfrage
+    wird als ANONYM behandelt, daher fehlende Rechte unabhaengig von der eigentlich
+    gemeinten Nutzerrolle) und "Zugangsdaten greifen, aber Rolle reicht nicht".
+    ``context=edit`` liefert die vollen Capabilities mit, nicht nur oeffentliche Felder.
+    Gibt ``{"id", "name", "slug", "roles", "can_upload_files", "can_publish_posts"}``
+    zurueck."""
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/users/me?context=edit"
+    result = _request(url, username, app_password, method="GET")
+    capabilities = result.get("capabilities", {})
+    return {
+        "id": result.get("id"),
+        "name": result.get("name"),
+        "slug": result.get("slug"),
+        "roles": result.get("roles", []),
+        "can_upload_files": bool(capabilities.get("upload_files")),
+        "can_publish_posts": bool(capabilities.get("publish_posts") or capabilities.get("edit_posts")),
+    }
+
+
 def upload_media(wp_url: str, username: str, app_password: str, image_bytes: bytes,
                   filename: str, mime_type: str = "image/webp") -> int:
     """Laedt ein Bild in die WordPress-Mediathek hoch, gibt die Medien-ID zurueck."""

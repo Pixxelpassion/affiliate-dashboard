@@ -28,7 +28,7 @@ from . import branding
 from .config import BASE_DIR, Config
 from .run import run_once
 from .settings_store import SettingsStore
-from .content import article_generator
+from .content import article_generator, wordpress_client
 from .content.content_store import ContentStore
 from .content.pipeline import run_content_item
 from .products import ga4_traffic
@@ -1142,6 +1142,18 @@ th{font-family:var(--head-font);color:var(--pp-muted);font-weight:600}
         <label style="margin:0;flex:1">WP-Anwendungspasswort <input type="password" name="wp_app_password" value="{{ t.wp_app_password or '' }}"></label>
         <button type="submit" class="small-btn" style="margin:0">Speichern</button>
       </form>
+      <form method="post" action="/settings/product-tabs/{{ t.id }}/wp-test" style="margin:.3rem 0">
+        <button type="submit" class="small-btn" style="margin:0">Verbindung testen</button>
+        {% set wt = wp_test_results.get(t.id) %}
+        {% if wt %}
+          {% if wt.status == 'ok' %}
+          <span style="color:var(--pp-green-dark);font-size:.82rem"> Authentifiziert als „{{ wt.name }}" (Rolle: {{ wt.roles|join(', ') }}) --
+            Medien hochladen: {{ 'ja' if wt.can_upload_files else 'NEIN' }}, Beiträge anlegen: {{ 'ja' if wt.can_publish_posts else 'NEIN' }}</span>
+          {% else %}
+          <span style="color:#b82105;font-size:.82rem"> {{ wt.message }}</span>
+          {% endif %}
+        {% endif %}
+      </form>
     </td>
   </tr>
   <tr>
@@ -1184,10 +1196,16 @@ def settings_page():
         product_tabs = store.list_product_tabs()
         research_projects = store.list_research_projects()
         raw_research = store.get_meta("last_research_result")
+        wp_test_results = {}
+        for t in product_tabs:
+            raw = store.get_meta(f"wp_test_result:{t['id']}")
+            if raw:
+                wp_test_results[t["id"]] = json.loads(raw)
     last_research = json.loads(raw_research) if raw_research else None
     return render_template_string(_SETTINGS_TEMPLATE, s=s, pages=pages, product_tabs=product_tabs,
                                    research_projects=research_projects,
                                    last_research=last_research,
+                                   wp_test_results=wp_test_results,
                                    saved=request.args.get("saved"),
                                    favicon=branding.FAVICON_LINK, nav_css=branding.NAV_CSS,
                                    header=branding.render_header("/settings"))
@@ -1267,6 +1285,26 @@ def settings_update_product_tab_wp(tab_id: int):
     wp_app_password = request.form.get("wp_app_password", "").strip()
     with _store() as store:
         store.update_product_tab_wp_credentials(tab_id, wp_username, wp_app_password)
+    return redirect("/settings?saved=1")
+
+
+@app.route("/settings/product-tabs/<int:tab_id>/wp-test", methods=["POST"])
+def settings_test_product_tab_wp(tab_id: int):
+    """Ruft ``/wp/v2/users/me`` mit den gespeicherten Zugangsdaten ab -- unterscheidet
+    zwischen "Auth greift gar nicht" (Anfrage wird anonym behandelt) und "Auth greift,
+    Rolle reicht nicht" (siehe wordpress_client.test_connection Docstring)."""
+    with _store() as store:
+        tab = next((t for t in store.list_product_tabs() if t["id"] == tab_id), None)
+        if tab is None:
+            return redirect("/settings?saved=1")
+        try:
+            info = wordpress_client.test_connection(
+                tab["site_base_url"] or "", tab["wp_username"] or "", tab["wp_app_password"] or "",
+            )
+            result = {"status": "ok", **info}
+        except Exception as exc:  # noqa: BLE001
+            result = {"status": "error", "message": str(exc)}
+        store.set_meta(f"wp_test_result:{tab_id}", json.dumps(result))
     return redirect("/settings?saved=1")
 
 
