@@ -115,6 +115,24 @@ def update_media_metadata(wp_url: str, username: str, app_password: str, media_i
     _request(url, username, app_password, method="POST", data=data, headers=headers)
 
 
+def get_post_rankmath_meta(wp_url: str, username: str, app_password: str, post_id: int) -> dict:
+    """Fragt ``context=edit`` fuer einen Beitrag ab und gibt die drei rank_math_*-Werte
+    zurueck, so wie sie WIRKLICH in der Datenbank stehen -- unabhaengig davon, was
+    RankMaths eigene Snippet-Editor-Vorschau anzeigt (die bei leerem Wert auf ihre
+    globale Vorlage/den Auszug zurueckfaellt, was leicht mit "nichts gespeichert"
+    verwechselt werden kann). Leere Strings heissen: der Wert wurde nicht gespeichert
+    (Plugin nicht aktiv, Registrierungs-Konflikt o.ae.), nicht: RankMath zeigt nur
+    einen Platzhalter."""
+    url = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts/{post_id}?context=edit"
+    result = _request(url, username, app_password, method="GET")
+    meta = result.get("meta", {})
+    return {
+        "rank_math_title": meta.get("rank_math_title", ""),
+        "rank_math_description": meta.get("rank_math_description", ""),
+        "rank_math_focus_keyword": meta.get("rank_math_focus_keyword", ""),
+    }
+
+
 def create_draft_post(wp_url: str, username: str, app_password: str, title: str,
                        body_html: str, featured_media_id: int | None = None, *,
                        rank_math_title: str | None = None,

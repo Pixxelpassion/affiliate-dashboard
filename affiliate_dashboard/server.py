@@ -805,6 +805,21 @@ setupDropzone('dz-pdf', 'pdf-input', 'dz-pdf-files');
   <div class="meta-row"><strong>Focus-Keyword:</strong> {{ item.article.focus_keyword }}</div>
   {% if item.wp_edit_link %}
   <div class="meta-row"><strong>WordPress-Entwurf:</strong> <a href="{{ item.wp_edit_link }}" target="_blank" rel="noopener">Im WP-Editor öffnen</a></div>
+  <form method="post" action="/content/item/{{ item.id }}/wp-meta-check" style="margin:.4rem 0">
+    <button type="submit" class="small-btn" style="margin:0">RankMath-Felder in WordPress prüfen</button>
+  </form>
+  {% if wp_meta_check %}
+    {% if wp_meta_check.status == 'ok' %}
+    <div class="meta-row" style="font-size:.82rem">
+      Tatsächlich in WordPress gespeichert:
+      <strong>SEO-Titel:</strong> {{ wp_meta_check.rank_math_title or '(leer)' }} ·
+      <strong>Beschreibung:</strong> {{ wp_meta_check.rank_math_description or '(leer)' }} ·
+      <strong>Fokus-Keyword:</strong> {{ wp_meta_check.rank_math_focus_keyword or '(leer)' }}
+    </div>
+    {% else %}
+    <div class="meta-row" style="color:#b82105;font-size:.82rem">{{ wp_meta_check.message }}</div>
+    {% endif %}
+  {% endif %}
   {% endif %}
 
   <div class="review-box">
@@ -872,13 +887,53 @@ def content_page():
             if item_id:
                 item = cstore.get_item(item_id)
 
+    wp_meta_check = None
+    if item_id:
+        with _store() as store:
+            raw = store.get_meta(f"wp_meta_check:{item_id}")
+        wp_meta_check = json.loads(raw) if raw else None
+
     return render_template_string(
         _CONTENT_TEMPLATE, product_tabs=product_tabs, tracking_id=tracking_id, tab=tab,
         items=items, item_id=item_id, item=item, gemini_configured=gemini_configured,
         knowledge_slug=knowledge_slug, knowledge_exists=knowledge_exists,
+        wp_meta_check=wp_meta_check,
         favicon=branding.FAVICON_LINK, nav_css=branding.NAV_CSS,
         header=branding.render_header("/content"),
     )
+
+
+@app.route("/content/item/<int:item_id>/wp-meta-check", methods=["POST"])
+def content_check_wp_meta(item_id: int):
+    """Fragt ab, was WIRKLICH als rank_math_*-Meta in WordPress gespeichert ist --
+    unabhaengig davon, was RankMaths eigene Snippet-Editor-Vorschau anzeigt (die bei
+    leerem Wert auf ihre globale Vorlage/den Auszug zurueckfaellt)."""
+    with _content_store() as cstore:
+        item = cstore.get_item(item_id)
+    if item is None or not item.get("wp_post_id"):
+        return redirect("/content")
+
+    with _store() as store:
+        tab = next(
+            (t for t in store.list_product_tabs() if _knowledge_slug(t) == item["tracking_id"]),
+            None,
+        )
+    tracking_id_param = tab["label"] if tab else ""
+
+    try:
+        if tab is None:
+            raise RuntimeError("Kein Produkt-Tab fuer diese Tracking-ID gefunden.")
+        meta = wordpress_client.get_post_rankmath_meta(
+            tab["site_base_url"] or "", tab["wp_username"] or "", tab["wp_app_password"] or "",
+            item["wp_post_id"],
+        )
+        result = {"status": "ok", **meta}
+    except Exception as exc:  # noqa: BLE001
+        result = {"status": "error", "message": str(exc)}
+
+    with _store() as store:
+        store.set_meta(f"wp_meta_check:{item_id}", json.dumps(result))
+    return redirect(f"/content?tracking_id={tracking_id_param}&item={item_id}")
 
 
 @app.route("/content/<tracking_id>/new", methods=["POST"])
