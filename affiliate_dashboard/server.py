@@ -719,7 +719,14 @@ korrekt eintragen (z.B. den Namen eines bereits angelegten Ordners) oder den Ord
 <form method="post" action="/content/{{ tab.label }}/new" enctype="multipart/form-data">
   <label>Produktname <input type="text" name="product_name" placeholder="z.B. Bosch GTS 10 XC"></label>
 
-  <label>Produktfotos (erstes Bild = Keyvisual)</label>
+  <label>Keyvisual (Titelbild, genau ein Foto)</label>
+  <div class="dropzone" id="dz-keyvisual">
+    <input type="file" id="keyvisual-input" name="keyvisual" accept="image/*">
+    <div class="dz-hint">Datei hierher ziehen oder klicken zum Auswählen</div>
+    <div class="dz-files" id="dz-keyvisual-files"></div>
+  </div>
+
+  <label>Weitere Produktfotos</label>
   <div class="dropzone" id="dz-images">
     <input type="file" id="images-input" name="images" accept="image/*" multiple>
     <div class="dz-hint">Dateien hierher ziehen oder klicken zum Auswählen</div>
@@ -763,6 +770,7 @@ function setupDropzone(zoneId, inputId, filesId) {
     updateFiles();
   });
 }
+setupDropzone('dz-keyvisual', 'keyvisual-input', 'dz-keyvisual-files');
 setupDropzone('dz-images', 'images-input', 'dz-images-files');
 setupDropzone('dz-pdf', 'pdf-input', 'dz-pdf-files');
 </script>
@@ -864,15 +872,24 @@ def content_page():
 @app.route("/content/<tracking_id>/new", methods=["POST"])
 def content_new_item(tracking_id: str):
     product_name = request.form.get("product_name", "").strip()
-    images = [f for f in request.files.getlist("images") if f and f.filename]
+    keyvisual = request.files.get("keyvisual")
+    keyvisual = keyvisual if (keyvisual and keyvisual.filename) else None
+    gallery_images = [f for f in request.files.getlist("images") if f and f.filename]
     manual_pdf = request.files.get("manual_pdf")
 
     with _store() as store:
         tab = next((t for t in store.list_product_tabs() if t["label"] == tracking_id), None)
         gemini_api_key = store.get_setting("gemini_api_key", "")
 
-    if not tab or not product_name or not images:
+    if not tab or not product_name or not keyvisual:
         return redirect(f"/content?tracking_id={tracking_id}")
+
+    # Keyvisual wird IMMER zuerst gespeichert (garantiert Index 0 fuer pipeline.py),
+    # unabhaengig davon, in welcher Reihenfolge der Browser/das Betriebssystem die
+    # uebrigen Produktfotos liefert -- Browser/OS sortieren Mehrfachauswahl/Drag&Drop
+    # oft alphabetisch, nicht nach Auswahlreihenfolge (Ursache eines frueheren Bugs,
+    # bei dem das falsche Bild als Keyvisual zugeschnitten wurde).
+    images = [keyvisual] + gallery_images
 
     slug = _knowledge_slug(tab)
     with _content_store() as cstore:
