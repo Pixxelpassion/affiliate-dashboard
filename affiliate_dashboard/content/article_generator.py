@@ -226,6 +226,14 @@ Reihenfolge = image_crops-Index ab 0)."""
     return contents
 
 
+# Deutlich ueber gemini_client.DEFAULT_TIMEOUT_MS (180s, fuer die einfacheren
+# SEO-Rechercheagent-Calls kalibriert) -- dieser Call ist schwerer: mehrere Bilder als
+# Input, Search-Grounding UND ein langer strukturierter Output (kompletter Artikeltext
+# + Bild-Metadaten je Foto). Laeuft ohnehin in einem Hintergrund-Thread, kein Nutzer
+# wartet synchron -- Geduld ist hier guenstiger als ein 504 DEADLINE_EXCEEDED.
+_ARTICLE_TIMEOUT_MS = 600_000
+
+
 def generate_article(context: dict, image_bytes_list: list[bytes], api_key: str) -> dict:
     """EIN Gemini-Call: Search-Grounding + Bild-Input + strukturierter JSON-Output.
     Gibt das Schema-Dict zurueck, ergaenzt um ``sources`` (Grounding-Quellen)."""
@@ -234,6 +242,7 @@ def generate_article(context: dict, image_bytes_list: list[bytes], api_key: str)
     article, sources = gemini_client.generate(
         contents, system_instruction, api_key,
         search=True, response_schema=_RESPONSE_SCHEMA, max_output_tokens=16000,
+        timeout_ms=_ARTICLE_TIMEOUT_MS,
     )
     article["sources"] = sources
     return article
